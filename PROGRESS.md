@@ -5,7 +5,7 @@ Updated at the end of every task (CLAUDE.md §15). Report actual results only.
 | Field | Value |
 |---|---|
 | Last updated | 2026-11-27 |
-| Current phase | 0 — Setup (spec-driven planning in progress) |
+| Current phase | 2 — Architecture (requirement baseline approved) |
 | Approach | Spec-driven: specs are reviewed and approved before any feature code |
 
 ## Phase status
@@ -13,7 +13,7 @@ Updated at the end of every task (CLAUDE.md §15). Report actual results only.
 | # | Phase | Status | Notes |
 |---|---|---|---|
 | 0 | Setup | In progress | Repo matches the Drive structure; environment check done (below); specs drafted |
-| 1 | Requirement analysis | Not started | `requirements/requirement-analysis.md` and `use-cases.docx` are still templates |
+| 1 | Requirement analysis | Done | Analysis v1.1 approved by the project owner on 2026-11-27 (CL-19): 32 FR, 21 NFR, 31 BR, 46 user stories, 106 acceptance criteria; `use-cases.docx` v1.0 written. 6 critical open questions remain (`requirements/open-questions.md`) |
 | 2 | Architecture | In progress | `architecture/SPEC.md` drafted; ADR-000, ADR-001, diagrams and `security-review.md` not started |
 | 3 | API design | Not started | API catalogue API-001..API-036 fixed in `architecture/SPEC.md`; `api-contracts.yaml` still the template placeholder |
 | 4a | Policy engine (test-first) | Not started | |
@@ -58,6 +58,7 @@ Backbone v0.3 §15 decisions postdate the child specs; where a child spec differ
 |---|---|---|
 | Base monorepo: Spring Boot 4.1.3 backend, React 19 frontend, Docker Compose with Postgres 18, Prometheus, Grafana, CI | NFR-006 (partial), NFR-007 (partial) | eca0cfe |
 | Repo aligned with the Drive `hackathon-project` structure | — | cd00682 |
+| Requirement analysis v1.1 approved; workbooks `user-stories.xlsx` and `requirement-traceability.xlsx` aligned; SPEC open questions merged into `requirements/open-questions.md` | All FR/NFR/BR | (this commit) |
 | CLAUDE.md updated from Drive (stack approved, CL-12..CL-18) | CL-17, CL-18 | 604bdcc |
 
 ## Tests run
@@ -70,17 +71,21 @@ Backbone v0.3 §15 decisions postdate the child specs; where a child spec differ
 
 ## Open blockers
 
+Single list: `requirements/open-questions.md` (OQ IDs; SPEC-Q IDs mapped there).
+
 | ID | Blocker | Blocks |
 |---|---|---|
-| SPEC-Q-02 | Expense categories beyond meals, hotel, local cab | Line items, policy engine, UI |
-| SPEC-Q-03 | Is a comment mandatory on send-back | API-017, UI |
-| SPEC-Q-05 | Scope and matching of duplicate checks | POL-006/007/009 |
-| SPEC-Q-14 | Does a finance head's clean claim ≤ 25,000 go to an auditor or auto-approve | Routing |
-| SPEC-Q-16 | May one finance head approve both the manager and finance-head steps of an auditor's claim | Chain engine |
-| — | Specs need team review and approval before code (CLAUDE.md §14.2) | All build phases |
+| OQ-028 | Line above 500 INR without receipt: block submission (ASM-003, spec default) or auto-reject? | POL-005 / BR-005 |
+| OQ-029 (SPEC-Q-05) | Scope of duplicate checks | BR-006, BR-007, BR-009 |
+| OQ-030 | Duplicate consequence: route with flag (ASM-004, spec default) or auto-reject? | BR-006, BR-007, BR-009 |
+| OQ-032 (SPEC-Q-02) | Expense categories beyond meals, hotel, local cab | Line items, policy engine, UI |
+| OQ-046 (SPEC-Q-14) | Finance head's clean claim ≤ 25,000: auditor or auto-approve? | Routing |
+| OQ-047 (SPEC-Q-16) | May one finance head approve two levels of an auditor's claim? | Chain engine |
+| OQ-034 (SPEC-Q-03) | Is a comment mandatory on send-back? (team treats as blocking) | API-017, UI |
+| — | Specs need team review against the approved baseline (CL-19) before code (CLAUDE.md §14.2) | All build phases |
 
-SPEC-Q-01 resolved in backbone v0.2. Non-critical open items with proposed defaults (`architecture/SPEC.md` §11–§12): SPEC-Q-04, SPEC-Q-06..13, SPEC-Q-15, ASM-S-01..06, Q-06, Q-13, Q-20.
+Resolved on approval of the analysis (CL-20): OQ-036 payout CSV format, OQ-037 auto-approve ceiling, OQ-038 limit-breach outcome, OQ-039 delegate roles.
 
 ## Next step
 
-Team reviews the six specs and answers the blocking questions, then: ADR-000 and ADR-001 (Phase 2), `api-contracts.yaml` (Phase 3), JUnit policy tests before the policy engine (Phase 4a).
+Project owner answers the blocking questions; team reviews the six specs against the approved requirement baseline (CL-19), then: ADR-000 and ADR-001 (Phase 2), `api-contracts.yaml` (Phase 3), JUnit policy tests before the policy engine (Phase 4a).

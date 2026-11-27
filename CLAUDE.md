@@ -45,7 +45,7 @@ A mid-size services company reimburses expenses through email threads and Excel.
 
 ## 2. Documented Business Requirements (the only rules you may implement)
 
-Everything in this section comes directly from `requirements.docx`. Requirement IDs are assigned here for traceability; keep them stable. If a rule is not in this section or in a later approved clarification (§6), **it does not exist**.
+Everything in this section comes directly from `requirements.docx`. Requirement IDs are assigned here for traceability; keep them stable. **The full approved baseline (CL-19) is in `requirements/*.md`**; where it is more detailed than this section, it wins. If a rule is not in this section or in a later approved clarification (§6), **it does not exist**.
 
 ### 2.1 Functional requirements — Must-have scope
 
@@ -155,6 +155,8 @@ These answers are now binding requirements. They take precedence over any earlie
 | CL-16 | Q-26 | The **finance head's own claims are approved by a finance auditor**, whatever the amount. They never go to a finance head step. |
 | CL-17 | Tech stack | Stack confirmed by the project owner: **React 19** frontend, **Spring Boot** backend, **PostgreSQL 18 in Docker**, **pytest for backend and API tests**, **Docker Compose** delivery, **Prometheus + Grafana** monitoring. Versions follow the AI Manthan Prerequisites Guide (§8). Supersedes the earlier FastAPI choice (ASM-011, withdrawn). |
 | CL-18 | Testing | **JUnit 5** (via `spring-boot-starter-test`) is used for Java unit tests — policy engine, approval-chain engine and other business logic — alongside **pytest** for backend API and integration tests. |
+| CL-19 | Requirement baseline | **Requirement analysis v1.1 approved** (2026-11-27). `requirements/requirement-analysis.md`, `functional-requirements.md` (FR-001–FR-032), `non-functional-requirements.md` (NFR-001–NFR-021), `business-rules.md` (BR-001–BR-031), `user-stories.md` (US-001–US-046) and `open-questions.md` are the requirement baseline. BR-001–BR-009 are POL-001–POL-009. Changes need a new version and approval. |
+| CL-20 | Team user stories | Where the team's `deliverables/user-stories.xlsx` differed from confirmed decisions, the confirmed decisions apply: limit breach auto-rejects (CL-07), auto-approve up to 25,000 INR (CL-02), 13-column payout CSV (CL-11), delegates limited to finance auditor or finance head (CL-13). The workbook was corrected. |
 
 ### 2.7 Routing summary (derived from CL-01 to CL-03)
 
@@ -210,7 +212,7 @@ The source only says approved claims go into a payout batch that "exports as a C
 | 10 | `currency` | `INR` | |
 | 11 | `claim_id` | `CLM-2026-01534` | |
 | 12 | `department` | `Consulting` | |
-| 13 | `narration` | `Expense reimbursement CLM-2026-01534` | Max 30 characters, trimmed |
+| 13 | `narration` | `Reimbursement CLM-2026-01534` | Max 30 characters, trimmed |
 
 The export screen and API also return a **control summary**: number of rows, total amount and the SHA-256 hash of the file. This requires seeded **synthetic bank details** for each employee (account number, IFSC) — an addition to DATA-001.
 
@@ -305,7 +307,9 @@ The source requires the design to be reviewed for ways to bypass approvals. Ever
 
 ## 6. Open Questions — Missing, Conflicting and Ambiguous Requirements
 
-These were found while reading `requirements.docx`. **Items marked Critical block the related work until answered.** Record answers here and in `requirements/requirement-analysis.md`.
+These were found while reading `requirements.docx`. **Items marked Critical block the related work until answered.**
+
+> **Since CL-19, open questions are maintained in `requirements/open-questions.md`** (OQ-0## = Q-##; `architecture/SPEC.md` SPEC-Q IDs are mapped there). The table below is kept for history. Record answers here and in `requirements/requirement-analysis.md`.
 
 | ID | Area | Question | Type | Critical? | Status |
 |---|---|---|---|---|---|
@@ -581,7 +585,7 @@ Required content:
 
 1. **Unit tests for business logic** — every policy rule (POL-001 to POL-009) has its own JUnit 5 tests (CL-18), written **before** the policy engine. The same rules are also covered by pytest API tests.
 2. **Approval tests** — every threshold boundary on the claim total (24,999.99 / 25,000.00 / 25,000.01 and 99,999.99 / 1,00,000.00 / 1,00,000.01 INR, per CL-03), auto-approve only at ≤ 25,000 with no weekend line (CL-02), weekend routing to manager, rejection with and without a comment (CL-04), send-back restart (CL-12), finance head's claim routed to auditor (CL-16), sample-audit hold blocking payout (CL-14), visibility of other users' claims returning 404 (CL-15), every chain path, send-back, and delegation (active, expired, invalid delegate, self-approval attempt).
-3. **API integration tests (pytest, against the running backend)** — every operation: happy path, validation errors, 401, 403 (including another employee's claim), 404, 409 state conflicts.
+3. **API integration tests (pytest, against the running backend)** — every operation: happy path, validation errors, 401, 403 (role not allowed), 404 (including another employee's claim, CL-15), 409 state conflicts.
 4. **Frontend component tests** — forms, validation messages, loading/empty/error states, duplicate-submit prevention, bulk actions.
 5. **End-to-end** — at least **10 written E2E cases** covering the demo story (required by source).
 6. Every feature has **positive, negative, boundary and edge-case** scenarios. Examples: amount 0, negative, very large; receipt at exactly 500 INR; same receipt with different file name; weekend dates; claims with no manager.
@@ -630,7 +634,7 @@ Keep documentation synchronized with the actual implementation. A task is not do
 ## 19. Final Acceptance Checklist
 
 - [ ] All agreed acceptance criteria satisfied, with evidence in `validation-matrix.xlsx`
-- [ ] Every Must-have item FR-001 to FR-020 and POL-001 to POL-009 validated, and every confirmed clarification CL-01 to CL-17 honoured
+- [ ] Every Must-have item FR-001 to FR-032, NFR-001 to NFR-021 and BR-001 to BR-031 validated, and every confirmed clarification CL-01 to CL-20 honoured
 - [ ] Frontend and backend integration works end to end
 - [ ] Every documented API verified against the contract
 - [ ] Error handling verified (validation, 401, 403, 404, 409, upload limits)
@@ -647,6 +651,7 @@ Keep documentation synchronized with the actual implementation. A task is not do
 
 | Date | Decision | Reason | Approved by |
 |---|---|---|---|
+| 2026-11-27 | Requirement analysis v1.1 approved as the baseline; team workbook conflicts resolved in favour of confirmed decisions (CL-19, CL-20); §16.3, §2.8 and §19 wording fixed as flagged in `architecture/SPEC.md` §13 | Owner approval of the analysis | Project owner |
 | 2026-11-27 | Added JUnit 5 for Java unit tests; pytest stays for backend API and integration tests | pytest cannot unit-test Java code; policy engine must be built test-first | Project owner |
 | 2026-11-27 | Stack confirmed: React 19 (Vite), **Spring Boot 4.1.x / JDK 21**, PostgreSQL 18 in Docker, pytest for backend and API tests, Docker Compose, Prometheus + Grafana. FastAPI withdrawn | Owner's decision; versions per AI Manthan Prerequisites Guide | Project owner |
 | 2026-11-27 | Recorded clarifications CL-12 to CL-16 (send-back restarts chain, delegates limited to finance auditor/head, sampled claims held from payout, own-claim visibility, finance head's claims approved by auditor) | Answers to Q-08, Q-09, Q-18, Q-19, Q-26 | Project owner |
