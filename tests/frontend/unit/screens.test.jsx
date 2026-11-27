@@ -374,3 +374,32 @@ describe('S-12 audit trail (TC-FE-120)', () => {
     expect(screen.queryByRole('button', { name: /edit|delete/i })).not.toBeInTheDocument()
   })
 })
+
+describe('contract alignment (TC-FE-140..141)', () => {
+  it('My claims: sorting by Total sends sort=totalAmount, then -totalAmount (API-004 sort enum)', async () => {
+    const user = userEvent.setup()
+    const f = mockFetch({
+      'GET /claims': page([
+        { claimId: 'a', claimNumber: 'CLM-2026-00001', status: 'PAID', total: '1500.00', lineCount: 1, createdAt: '2026-11-20T00:00:00Z' },
+      ]),
+    })
+    renderApp('/claims')
+    await user.click(await screen.findByRole('button', { name: /^Total/ }))
+    await waitFor(() => expect(calls(f, 'GET /claims').at(-1)[0]).toContain('sort=totalAmount'))
+    await user.click(screen.getByRole('button', { name: /^Total/ }))
+    await waitFor(() => expect(calls(f, 'GET /claims').at(-1)[0]).toContain('sort=-totalAmount'))
+    expect(screen.getByRole('columnheader', { name: /Total/ })).toHaveAttribute('aria-sort', 'descending')
+  })
+
+  it('Dashboard: null average approval time shows an empty state, not "— h" (API-032)', async () => {
+    mockFetch({
+      'GET /departments': [],
+      'GET /dashboard/spend': { groupBy: 'category', items: [], grandTotal: '0.00' },
+      'GET /dashboard/policy-violations': { items: [], total: 0 },
+      'GET /dashboard/approval-time': { approvedClaims: 0, averageHours: null, routedClaims: 0, averageHoursRouted: null },
+    })
+    renderApp('/dashboard', USERS.auditor)
+    expect(await screen.findByText('No approved claims in this period.')).toBeInTheDocument()
+    expect(screen.queryByText('— h')).not.toBeInTheDocument()
+  })
+})

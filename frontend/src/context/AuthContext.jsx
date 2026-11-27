@@ -38,7 +38,9 @@ export function AuthProvider({ children, onSessionEnded }) {
     const res = await authApi.login(email, password)
     tokenRef.current = res.accessToken
     try {
-      const [user, config] = await Promise.all([authApi.me(), policyApi.clientConfig()])
+      // LoginResponse.user is the same Me object as API-003, so no extra /me call is needed.
+      const user = res.user ?? (await authApi.me())
+      const config = await policyApi.clientConfig()
       setSession({ token: res.accessToken, user, config })
       return user
     } catch (err) {

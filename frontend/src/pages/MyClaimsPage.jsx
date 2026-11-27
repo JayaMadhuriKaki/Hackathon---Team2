@@ -19,12 +19,20 @@ export default function MyClaimsPage() {
   )
 
   const columns = [
-    { key: 'claimNumber', header: 'Claim' },
+    // Sortable fields per API-004 `sort` enum in architecture/api-contracts.yaml
+    { key: 'claimNumber', header: 'Claim', sortable: true },
     { key: 'createdAt', header: 'Created', sortable: true, render: (r) => <DateDisplay value={r.createdAt} /> },
     { key: 'submittedAt', header: 'Submitted', sortable: true, render: (r) => <DateDisplay value={r.submittedAt} /> },
     { key: 'lineCount', header: 'Lines', align: 'right' },
-    { key: 'total', header: 'Total', align: 'right', render: (r) => <MoneyDisplay value={r.total} /> },
-    { key: 'status', header: 'Status', render: (r) => <StatusBadge status={r.status} /> },
+    {
+      key: 'total',
+      sortKey: 'totalAmount',
+      header: 'Total',
+      align: 'right',
+      sortable: true,
+      render: (r) => <MoneyDisplay value={r.total} />,
+    },
+    { key: 'status', header: 'Status', sortable: true, render: (r) => <StatusBadge status={r.status} /> },
     {
       key: 'actions',
       header: 'Actions',

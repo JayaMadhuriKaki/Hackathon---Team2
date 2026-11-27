@@ -12,8 +12,10 @@ import { todayIst } from '../utils/dates.js'
 import { fieldErrors, messageFor } from '../utils/errors.js'
 import { validateDelegation } from '../utils/validation.js'
 
+/** Uses the server's `active` flag (computed in IST, contract DelegationView); dates only split the rest. */
 export function delegationStatus(d, today = todayIst()) {
   if (d.cancelledAt) return 'CANCELLED'
+  if (d.active) return 'ACTIVE'
   if (d.endDate < today) return 'ENDED'
   if (d.startDate > today) return 'SCHEDULED'
   return 'ACTIVE'

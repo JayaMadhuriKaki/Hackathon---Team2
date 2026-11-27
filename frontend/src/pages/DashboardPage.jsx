@@ -10,6 +10,11 @@ import { toPaise } from '../utils/money.js'
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
+/** API-032 averages are decimal strings, or null when no claim matches (contract ApprovalTimeReport). */
+function hours(value) {
+  return value === null || value === undefined ? '—' : `${value} h`
+}
+
 function monthLabel(key) {
   const m = /^(\d{4})-(\d{2})$/.exec(key ?? '')
   return m ? `${MONTHS[Number(m[2]) - 1]} ${m[1]}` : key
@@ -148,18 +153,22 @@ export default function DashboardPage() {
 
       <div className="dash-grid">
         <Section title="Average approval time" query={approvalTime} footnote="Submit to final approval, calendar time.">
-          {(d) => (
-            <div className="kpis">
-              <div className="kpi">
-                <span className="kpi-value">{d?.averageHours ?? '—'} h</span>
-                <span className="kpi-label">All approved claims ({d?.approvedClaims ?? 0})</span>
+          {(d) =>
+            !d?.approvedClaims ? (
+              <EmptyState title="No approved claims in this period." />
+            ) : (
+              <div className="kpis">
+                <div className="kpi">
+                  <span className="kpi-value">{hours(d.averageHours)}</span>
+                  <span className="kpi-label">All approved claims ({d.approvedClaims})</span>
+                </div>
+                <div className="kpi">
+                  <span className="kpi-value">{hours(d.averageHoursRouted)}</span>
+                  <span className="kpi-label">Through the approval chain ({d.routedClaims})</span>
+                </div>
               </div>
-              <div className="kpi">
-                <span className="kpi-value">{d?.averageHoursRouted ?? '—'} h</span>
-                <span className="kpi-label">Through the approval chain ({d?.routedClaims ?? 0})</span>
-              </div>
-            </div>
-          )}
+            )
+          }
         </Section>
 
         <Section title="Policy violations" query={violations}>

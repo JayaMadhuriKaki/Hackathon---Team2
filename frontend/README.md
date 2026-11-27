@@ -1,7 +1,10 @@
 # ExpenseFlow — Frontend
 
 React 19 + Vite single-page app for ExpenseFlow (expense claims and policy-driven approvals).
-Specification: [`SPEC.md`](SPEC.md). API: Spring Boot backend under `/api/v1`.
+Specification: [`SPEC.md`](SPEC.md). API: Spring Boot backend under `/api/v1`, described by
+[`architecture/api-contracts.yaml`](../architecture/api-contracts.yaml) (browse it in Swagger UI at
+http://localhost:8082 when the Docker stack is up). Field names in `src/api/` follow the contract, and
+`tests/frontend/unit/contract.test.js` fails if a frontend call is not a documented operation.
 
 ## Run
 

@@ -4,7 +4,8 @@ import { EmptyState, ErrorState, LoadingState } from './States.jsx'
  * Dense, scannable table with server paging, optional row selection and per-row messages
  * (NFR-003). Below 640 px rows render as cards via CSS (data-label on each cell, RESP-03).
  *
- * columns: [{ key, header, render?(row), align?: 'right', sortable?: bool }]
+ * columns: [{ key, header, render?(row), align?: 'right', sortable?: bool, sortKey?: string }]
+ *   sortKey is the API sort field when it differs from key (e.g. column "total" sorts by "totalAmount").
  */
 export function DataTable({
   caption,
@@ -52,8 +53,9 @@ export function DataTable({
 
   function headerSort(col) {
     if (!col.sortable || !onSortChange) return undefined
-    if (sort === col.key) return 'ascending'
-    if (sort === `-${col.key}`) return 'descending'
+    const field = col.sortKey ?? col.key
+    if (sort === field) return 'ascending'
+    if (sort === `-${field}`) return 'descending'
     return 'none'
   }
 
@@ -86,7 +88,10 @@ export function DataTable({
                     <button
                       type="button"
                       className="sort-button"
-                      onClick={() => onSortChange(sort === col.key ? `-${col.key}` : col.key)}
+                      onClick={() => {
+                        const field = col.sortKey ?? col.key
+                        onSortChange(sort === field ? `-${field}` : field)
+                      }}
                     >
                       {col.header}
                       <span aria-hidden="true">
