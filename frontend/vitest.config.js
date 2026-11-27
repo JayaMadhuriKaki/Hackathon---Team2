@@ -10,6 +10,8 @@ const nm = path.join(here, 'node_modules')
 
 export default defineConfig({
   plugins: [react()],
+  // Keep Vite/Vitest caches inside frontend/ even though the test root is the repo root.
+  cacheDir: path.join(nm, '.vite'),
   resolve: {
     alias: [
       {
