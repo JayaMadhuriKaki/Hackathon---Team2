@@ -72,14 +72,9 @@ Backbone v0.3 §15 decisions postdate the child specs; where a child spec differ
 
 | ID | Blocker | Blocks |
 |---|---|---|
-| SPEC-Q-02 | Expense categories beyond meals, hotel, local cab | Line items, policy engine, UI |
-| SPEC-Q-03 | Is a comment mandatory on send-back | API-017, UI |
-| SPEC-Q-05 | Scope and matching of duplicate checks | POL-006/007/009 |
-| SPEC-Q-14 | Does a finance head's clean claim ≤ 25,000 go to an auditor or auto-approve | Routing |
-| SPEC-Q-16 | May one finance head approve both the manager and finance-head steps of an auditor's claim | Chain engine |
-| — | Specs need team review and approval before code (CLAUDE.md §14.2) | All build phases |
+| — | Each build task needs its plan approved before code (CLAUDE.md §14.2) | Current task |
 
-SPEC-Q-01 resolved in backbone v0.2. Non-critical open items with proposed defaults (`architecture/SPEC.md` §11–§12): SPEC-Q-04, SPEC-Q-06..13, SPEC-Q-15, ASM-S-01..06, Q-06, Q-13, Q-20.
+All business-critical spec questions are answered (2026-11-27, Jaya): SPEC-Q-02 only three categories; SPEC-Q-03 send-back comment mandatory; SPEC-Q-05 mixed duplicate scope; SPEC-Q-14 finance head claims always go to an auditor; SPEC-Q-16 one finance head may approve both steps. SPEC-Q-01 resolved in backbone v0.2. These answers still need adding to `CLAUDE.md` §6 on Drive by the owner. Non-critical open items with proposed defaults (`architecture/SPEC.md` §11–§12): SPEC-Q-04, SPEC-Q-06..13, SPEC-Q-15, ASM-S-01..06, Q-06, Q-13, Q-20.
 
 ## Next step
 
