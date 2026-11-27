@@ -19,8 +19,8 @@ Updated at the end of every task (CLAUDE.md §15). Report actual results only.
 | 4a | Policy engine (test-first) | Done | Base fixes (API-001 path, error shape, trace ID); 9 rules + `PolicyEngine` + `RoutingDecider`, tests written and confirmed failing first |
 | 4b | Approval chain + delegation | Done | Chain engine, step authorizer, delegation rules, sample draw — JUnit tests written and confirmed failing first |
 | 4c | Remaining backend | Done (runs in Docker) | Flyway V001–V005, least-privilege app role, JWT login, API-002..038, idempotency, metrics, demo users. Gaps: `api-contracts.yaml` not written yet; full Python seed (DATA-001..003) not written; pytest suite not written |
-| 5 | Frontend | Not started | Base React app exists (home page + health card only) |
-| 6 | Validation | Not started | |
+| 5 | Frontend | Done (merged in PR #4, `cb8672d`) | 13 screens wired to the API; 63 Vitest + 6 mocked-UI Playwright tests pass (QA laptop, 2026-11-27); 11 stack E2E tests written, not yet run |
+| 6 | Validation | In progress (QA) | 131 written cases in `deliverables/test-cases.xlsx`; pytest API suite (180 tests) written; security review v0.2; nothing run against the stack yet — see QA section |
 | 7 | Deployment | In progress | Docker Compose stack and CI (tests + build) exist from the base setup; dependency check and seed not done |
 | 8 | Support (SRE) | Not started | Prometheus + Grafana run and scrape the backend; no custom metrics, dashboard, alert or runbook yet |
 | 9 | Demo | Not started | |
@@ -81,6 +81,37 @@ Backbone v0.3 §15 decisions postdate the child specs; where a child spec differ
 | 2026-11-27 | `backend: .\mvnw.cmd test` | 104 run, 0 failed (4b implemented) |
 | 2026-11-27 | `backend: .\mvnw.cmd clean test` (with API flow tests on H2) | 131 run, 130 passed, 1 failed: leftover temp export file from an earlier run; fixed with per-run temp dirs, **not re-run** (stopped on request to prioritise Docker) |
 | 2026-11-27 | `docker compose up -d --build backend` + HTTP smoke script | Migrations V001–V005 applied, schema validated, 8 demo users seeded; login, create, line, submit → PENDING_MANAGER, manager approve → APPROVED, other employee → 404, dashboard, payout eligible, audit search, 8 metric series, frontend proxy — all OK |
+| 2026-11-27 (QA laptop) | `frontend: npx vitest run` | **63 passed, 0 failed** (4 files) |
+| 2026-11-27 (QA laptop) | `frontend: PW_CHANNEL=msedge npx playwright test --project=ui` | **6 passed** (mocked API: layout, phone width, side-by-side receipt, keyboard reject) |
+| 2026-11-27 (QA laptop) | `.venv: pytest tests -q` | 180 collected, **180 skipped** — API not reachable (Docker daemon not running). Not a pass |
+| 2026-11-27 (QA laptop) | `backend: mvnw test` | **Not run** — QA laptop has JDK 17, needs 21 |
+
+## QA and testing (Vivek, 2026-11-27)
+
+| Item | Location | State |
+|---|---|---|
+| 131 written test cases (47 unit, 66 API, 8 integration, 10 E2E) + Policy Rules sheet + ASM-013..026 | `deliverables/test-cases.xlsx` | Written, all Not Run |
+| pytest API suite, 180 tests: auth/errors, capture + visibility, POL-001..009, routing thresholds, approve/reject/send-back, delegation, review queue + bulk + sample audit, payout CSV, dashboard/audit/config | `tests/backend/`, `tests/expenseflow_api.py`, `tests/conftest.py` | Written; collects; not run |
+| DB append-only and least-privilege checks (B-11, B-13) | `tests/integration/test_audit_append_only_db.py` | Written; not run |
+| Security and approval-bypass review (B-01..B-20, SEC-01..28, F-01..F-08 re-checked) | `architecture/security-review.md` | v0.2 |
+
+How to run the API suite (repo root, stack up):
+
+```powershell
+docker compose up -d --build
+py -3.13 -m venv .venv; .\.venv\Scripts\python -m pip install -r tests/requirements.txt
+.\.venv\Scripts\python -m pytest tests -q
+```
+
+QA blockers:
+
+| ID | Blocker | Blocks |
+|---|---|---|
+| QA-1 | Docker Desktop not running on the QA laptop (I could not start it from the session) | pytest suite, stack E2E, DB checks |
+| QA-2 | JDK 21 missing on the QA laptop (17 installed, `JAVA_HOME` unset) | Local `mvnw test`; workaround: run JUnit in Docker or rely on CI |
+| QA-3 | Test-case ID schemes differ: `tests/SPEC.md` §2 vs `deliverables/test-cases.xlsx` vs frontend E2E (TC-E2E-001..011) | One traceable ID per case in the validation matrix |
+| QA-4 | ASM-013..026 not yet in CLAUDE.md (held at QA's request); ASM-021 and ASM-026 need owner confirmation | Final expected results |
+| QA-5 | CI runs no Vitest, pytest, Playwright or dependency check (F-04, NFR-007) | Phase 7 exit |
 
 ## Open blockers
 
