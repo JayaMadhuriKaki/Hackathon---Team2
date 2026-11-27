@@ -1,0 +1,13 @@
+2026-11-27T18:55:57+05:30
+$ PW_CHANNEL=msedge npx playwright test --project=ui
+
+Running 6 tests using 1 worker
+
+  ✓  1 [ui] › ..\tests\frontend\e2e\ui-layout.spec.js:95:3 › projector 1280×720 › TC-E2E-UI-01 login → my claims: no horizontal scroll, labelled fields (5.8s)
+  ✓  2 [ui] › ..\tests\frontend\e2e\ui-layout.spec.js:111:3 › projector 1280×720 › TC-E2E-UI-02 approver review shows claim and receipt side by side (NFR-002, AC-06) (3.4s)
+  ✓  3 [ui] › ..\tests\frontend\e2e\ui-layout.spec.js:131:3 › projector 1280×720 › TC-E2E-UI-03 reject with keyboard only: Esc closes, empty reason blocked (A11Y-03, A11Y-07, AC-07) (3.9s)
+  ✓  4 [ui] › ..\tests\frontend\e2e\ui-layout.spec.js:167:3 › phone 360×640 (NFR-001) › TC-E2E-UI-04 claim capture: no horizontal scroll, 44px targets, sticky submit bar (RESP-02, AC-01) (3.1s)
+  ✓  5 [ui] › ..\tests\frontend\e2e\ui-layout.spec.js:203:3 › phone 360×640 (NFR-001) › TC-E2E-UI-05 tables become cards and the nav collapses into a menu (RESP-03) (2.8s)
+  ✓  6 [ui] › ..\tests\frontend\e2e\ui-layout.spec.js:222:3 › phone 360×640 (NFR-001) › TC-E2E-UI-06 approver review on phone: receipt above the lines, actions reachable (RESP-04) (2.6s)
+
+  6 passed (35.9s)

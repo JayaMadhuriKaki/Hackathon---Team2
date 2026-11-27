@@ -20,7 +20,7 @@ Updated at the end of every task (CLAUDE.md §15). Report actual results only.
 | 4b | Approval chain + delegation | Done | Chain engine, step authorizer, delegation rules, sample draw — JUnit tests written and confirmed failing first |
 | 4c | Remaining backend | Done (runs in Docker) | Flyway V001–V005, least-privilege app role, JWT login, API-002..038, idempotency, metrics, demo users. Contract `api-contracts.yaml` done (redocly: 0 errors). Synthetic org seeded automatically on first `docker compose up` (150 employees, 8 departments, hierarchy, bank details: DATA-001/002/004/005; verified on an empty DB). Gaps: 3,000 historical claims (DATA-003); pytest suite |
 | 5 | Frontend | Done (merged PR #4) | 13 screens wired to the API; integrated end to end on `feature/integration` (payout create response fix, nginx DNS re-resolve) |
-| 6 | Validation | Not started | |
+| 6 | Validation | In progress (QA) | Team CI evidence in `deliverables/test-cases.xlsx` (202 cases: 175 Pass, 1 Fail, 26 Not Run); QA adds 131 planned cases (sheet *QA Planned Cases*), a 180-test pytest API + DB suite (now run report-only in CI), security review v0.2 and QA reports in `deliverables/` |
 | 7 | Deployment | In progress | One-command Compose stack incl. Swagger UI; CI deploys the stack on the runner and runs smoke + 11 browser E2E, npm audit, Trivy image scan, GHCR publish on main. Full seed not done |
 | 8 | Support (SRE) | Not started | Prometheus + Grafana run and scrape the backend; no custom metrics, dashboard, alert or runbook yet |
 | 9 | Demo | Not started | |
@@ -82,6 +82,21 @@ Backbone v0.3 §15 decisions postdate the child specs; where a child spec differ
 | 2026-11-27 | `backend: .\mvnw.cmd clean test` (with API flow tests on H2) | 131 run, 130 passed, 1 failed: leftover temp export file from an earlier run; fixed with per-run temp dirs, **not re-run** (stopped on request to prioritise Docker) |
 | 2026-11-27 | `docker compose up -d --build backend` + HTTP smoke script | Migrations V001–V005 applied, schema validated, 8 demo users seeded; login, create, line, submit → PENDING_MANAGER, manager approve → APPROVED, other employee → 404, dashboard, payout eligible, audit search, 8 metric series, frontend proxy — all OK |
 | 2026-11-27 | `docker compose up -d --build` + `py -3.13 tests/integration/smoke_test.py` + `npx playwright test --project=stack` (Edge) + `npm test` | Smoke passed; **E2E 11/11 passed**; Vitest 63/63; backend JUnit all passed. Fixed on the way: payout-create response shape, nginx stale backend IP, login rate limit counted successful logins |
+| 2026-11-27 (QA laptop) | `frontend: npx vitest run` | 63 passed, 0 failed. Evidence `demo/test-evidence/` |
+| 2026-11-27 (QA laptop) | `frontend: PW_CHANNEL=msedge npx playwright test --project=ui` | 6 passed (mocked API) |
+| 2026-11-27 (QA laptop) | `frontend: npm audit`; `npm run lint`; `npm run build` | 0 vulnerabilities; lint 0 errors, 5 warnings (BUG-016); build OK |
+| 2026-11-27 (QA laptop) | `pytest tests -q` | 180 collected, not run locally (Docker unavailable); added to CI deploy job (report-only) |
+
+## QA and testing (Vivek, 2026-11-27)
+
+| Item | Location | State |
+|---|---|---|
+| 131 QA-planned cases (IDs `QA-TC-…`) + QA Policy Rules sheet + ASM-013..026 | `deliverables/test-cases.xlsx` sheets *QA Planned Cases*, *QA Policy Rules* | Written; 118 automated; 3 seed cases blocked by BUG-008 (3,000 claims not seeded) |
+| pytest API suite (169) + DB append-only / least-privilege checks (11) | `tests/backend/`, `tests/integration/test_*.py` | Runs in CI deploy job, report-only (`qa-pytest-results` artefact) |
+| Security and approval-bypass review | `architecture/security-review.md` | v0.2 |
+| QA summary, defect report, coverage report | `deliverables/qa-summary.md`, `defect-report.md`, `test-coverage-report.md` | Done |
+
+QA blockers: Docker not usable on the QA laptop and JDK 17 instead of 21 (use CI); ASM-021/ASM-026 and ASM-013..026 need owner confirmation before going into CLAUDE.md.
 
 ## Open blockers
 
