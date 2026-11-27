@@ -84,6 +84,7 @@ Backbone v0.3 §15 decisions postdate the child specs; where a child spec differ
 | 2026-11-27 (QA laptop) | `frontend: npx vitest run` | **63 passed, 0 failed** (4 files) |
 | 2026-11-27 (QA laptop) | `frontend: PW_CHANNEL=msedge npx playwright test --project=ui` | **6 passed** (mocked API: layout, phone width, side-by-side receipt, keyboard reject) |
 | 2026-11-27 (QA laptop) | `.venv: pytest tests -q` | 180 collected, **180 skipped** — API not reachable (Docker daemon not running). Not a pass |
+| 2026-11-27 (QA laptop) | `frontend: npm audit` / `npm run lint; npm run build` | **0 vulnerabilities**; lint 0 errors, 5 warnings (DEF-007); build OK. Evidence in `demo/test-evidence/` |
 | 2026-11-27 (QA laptop) | `backend: mvnw test` | **Not run** — QA laptop has JDK 17, needs 21 |
 
 ## QA and testing (Vivek, 2026-11-27)
@@ -111,7 +112,8 @@ QA blockers:
 | QA-2 | JDK 21 missing on the QA laptop (17 installed, `JAVA_HOME` unset) | Local `mvnw test`; workaround: run JUnit in Docker or rely on CI |
 | QA-3 | Test-case ID schemes differ: `tests/SPEC.md` §2 vs `deliverables/test-cases.xlsx` vs frontend E2E (TC-E2E-001..011) | One traceable ID per case in the validation matrix |
 | QA-4 | ASM-013..026 not yet in CLAUDE.md (held at QA's request); ASM-021 and ASM-026 need owner confirmation | Final expected results |
-| QA-5 | CI runs no Vitest, pytest, Playwright or dependency check (F-04, NFR-007) | Phase 7 exit |
+| QA-5 | CI runs no Vitest, pytest, Playwright or dependency check (DEF-001, NFR-007) | Phase 7 exit |
+| QA-6 | **DEF-006 (High): synthetic seed (150 employees, 8 departments, 3,000 claims) not implemented** | FR-027–FR-030, 3 blocked cases, final acceptance |
 
 ## Open blockers
 

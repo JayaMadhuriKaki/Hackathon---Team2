@@ -1,0 +1,98 @@
+2026-11-27T18:55:06+05:30
+$ npx vitest run --reporter=verbose
+
+ RUN  v5.1.2 C:/Users/Vivek12/Documents/Hackathon/Hackathon---Team2
+
+ ✓ tests/frontend/unit/contract.test.js > frontend ↔ api-contracts.yaml (TC-FE-130..133) > the contract defines the 38 documented operations 12ms
+ ✓ tests/frontend/unit/contract.test.js > frontend ↔ api-contracts.yaml (TC-FE-130..133) > every frontend API call is a documented operation (method + path) 80ms
+ ✓ tests/frontend/unit/contract.test.js > frontend ↔ api-contracts.yaml (TC-FE-130..133) > every documented operation except health is used by the frontend 17ms
+ ✓ tests/frontend/unit/contract.test.js > frontend ↔ api-contracts.yaml (TC-FE-130..133) > status badges have a label for every claim, step and batch status 6ms
+ ✓ tests/frontend/unit/contract.test.js > frontend ↔ api-contracts.yaml (TC-FE-130..133) > every error code maps to a specific message (never the generic fallback by accident) 6ms
+ ✓ tests/frontend/unit/contract.test.js > frontend ↔ api-contracts.yaml (TC-FE-130..133) > allowedActions values used by the UI are the contract enum 2ms
+ ✓ tests/frontend/unit/utils.test.js > money (TC-FE-001..004) > AC-17: "100000.00" is shown as ₹1,00,000.00 (Indian grouping) 12ms
+ ✓ tests/frontend/unit/utils.test.js > money (TC-FE-001..004) > sums in integer paise, never floats 2ms
+ ✓ tests/frontend/unit/utils.test.js > money (TC-FE-001..004) > rejects malformed money strings 1ms
+ ✓ tests/frontend/unit/utils.test.js > money (TC-FE-001..004) > shows a dash for missing values 1ms
+ ✓ tests/frontend/unit/utils.test.js > dates (TC-FE-005..007) > AC-18: 2026-11-27T18:45:00Z is shown as 28 Nov 2026, 00:15 IST 2ms
+ ✓ tests/frontend/unit/utils.test.js > dates (TC-FE-005..007) > date-only values are not shifted by time zone 1ms
+ ✓ tests/frontend/unit/utils.test.js > dates (TC-FE-005..007) > today is computed in IST 5ms
+ ✓ tests/frontend/unit/utils.test.js > dates (TC-FE-005..007) > nights between check-in and check-out (ASM-005) 2ms
+ ✓ tests/frontend/unit/utils.test.js > line validation (TC-FE-008..016) > accepts a valid meals line 4ms
+ ✓ tests/frontend/unit/utils.test.js > line validation (TC-FE-008..016) > amount "0" is rejected 2ms
+ ✓ tests/frontend/unit/utils.test.js > line validation (TC-FE-008..016) > amount "0.00" is rejected 1ms
+ ✓ tests/frontend/unit/utils.test.js > line validation (TC-FE-008..016) > amount "-10" is rejected 0ms
+ ✓ tests/frontend/unit/utils.test.js > line validation (TC-FE-008..016) > amount "10.123" is rejected 0ms
+ ✓ tests/frontend/unit/utils.test.js > line validation (TC-FE-008..016) > amount "" is rejected 0ms
+ ✓ tests/frontend/unit/utils.test.js > line validation (TC-FE-008..016) > expense date in the future is rejected 1ms
+ ✓ tests/frontend/unit/utils.test.js > line validation (TC-FE-008..016) > vendor longer than 120 characters is rejected; 120 is allowed 1ms
+ ✓ tests/frontend/unit/utils.test.js > line validation (TC-FE-008..016) > receipt number is required (CL-05) 5ms
+ ✓ tests/frontend/unit/utils.test.js > line validation (TC-FE-008..016) > hotel lines need city and check-out after check-in (CL-08, ASM-005) 3ms
+ ✓ tests/frontend/unit/utils.test.js > line validation (TC-FE-008..016) > AC-02/AC-03: receipt is required strictly above the limit (POL-005) 1ms
+ ✓ tests/frontend/unit/utils.test.js > filter and delegation validation (TC-FE-017..018) > min must not exceed max; from must not be after to 2ms
+ ✓ tests/frontend/unit/utils.test.js > filter and delegation validation (TC-FE-017..018) > delegation end date must be on or after start 1ms
+ ✓ tests/frontend/unit/utils.test.js > error messages (TC-FE-019..021) > maps codes to human messages and never shows raw text for unknown errors 1ms
+ ✓ tests/frontend/unit/utils.test.js > error messages (TC-FE-019..021) > uses the server message for business-rule violations 1ms
+ ✓ tests/frontend/unit/utils.test.js > error messages (TC-FE-019..021) > reads field errors from details.fields 1ms
+ ✓ tests/frontend/unit/utils.test.js > login redirect safety (TC-FE-022) > only same-origin relative paths are allowed (no open redirect) 4ms
+ ✓ tests/frontend/unit/client.test.js > API client (TC-FE-030..035) > parses the standard error shape into ApiError 26ms
+ ✓ tests/frontend/unit/client.test.js > API client (TC-FE-030..035) > handles a non-JSON error body and takes the trace ID from X-Trace-Id 7ms
+ ✓ tests/frontend/unit/client.test.js > API client (TC-FE-030..035) > maps network failures to status 0 3ms
+ ✓ tests/frontend/unit/client.test.js > API client (TC-FE-030..035) > sends the bearer token and the Idempotency-Key header 3ms
+ ✓ tests/frontend/unit/client.test.js > API client (TC-FE-030..035) > calls the unauthorized handler on 401 5ms
+ ✓ tests/frontend/unit/client.test.js > API client (TC-FE-030..035) > builds query strings and skips empty values 7ms
+ ✓ tests/frontend/unit/client.test.js > API client (TC-FE-030..035) > returns a blob and file name for downloads 8ms
+stderr | tests/frontend/unit/screens.test.jsx > navigation and route gates (TC-FE-040..043) > AC-13: an employee sees no Approvals, Payouts, Audit or Policy links
+An update to MyClaimsPage inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+stderr | tests/frontend/unit/screens.test.jsx > navigation and route gates (TC-FE-040..043) > a finance head sees admin links; an auditor sees the review queue and dashboard
+An update to MyClaimsPage inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+ ✓ tests/frontend/unit/screens.test.jsx > navigation and route gates (TC-FE-040..043) > AC-13: an employee sees no Approvals, Payouts, Audit or Policy links 362ms
+ ✓ tests/frontend/unit/screens.test.jsx > navigation and route gates (TC-FE-040..043) > AC-12: an employee visiting /payout-batches gets a forbidden state and no API call 35ms
+ ✓ tests/frontend/unit/screens.test.jsx > navigation and route gates (TC-FE-040..043) > a finance head sees admin links; an auditor sees the review queue and dashboard 110ms
+ ✓ tests/frontend/unit/screens.test.jsx > S-02 My claims (TC-FE-050..052) > shows the empty state 66ms
+ ✓ tests/frontend/unit/screens.test.jsx > S-02 My claims (TC-FE-050..052) > shows rows with Indian-grouped totals and an Edit link only for drafts 94ms
+ ✓ tests/frontend/unit/screens.test.jsx > S-02 My claims (TC-FE-050..052) > shows a readable error with the trace reference 41ms
+ ✓ tests/frontend/unit/screens.test.jsx > S-04 claim detail (TC-FE-060..062) > AC-14: another user’s claim shows the same not-found text 40ms
+ ✓ tests/frontend/unit/screens.test.jsx > S-04 claim detail (TC-FE-060..062) > auto-rejected claims list every breaching line with limit and actual (CL-07) 79ms
+ ✓ tests/frontend/unit/screens.test.jsx > S-04 claim detail (TC-FE-060..062) > shows Edit only when EDIT is in allowedActions 57ms
+ ✓ tests/frontend/unit/screens.test.jsx > S-06 approver review (TC-FE-070..074) > AC-09: no decision buttons when allowedActions is empty 96ms
+ ✓ tests/frontend/unit/screens.test.jsx > S-06 approver review (TC-FE-070..074) > AC-07: reject cannot be confirmed with an empty or whitespace comment 772ms
+ ✓ tests/frontend/unit/screens.test.jsx > S-06 approver review (TC-FE-070..074) > AC-08: a 409 on approve shows a message and reloads the claim 312ms
+ ✓ tests/frontend/unit/screens.test.jsx > S-06 approver review (TC-FE-070..074) > shows the receipt side by side for the selected line (NFR-002) 150ms
+ ✓ tests/frontend/unit/screens.test.jsx > S-03 claim editor (TC-FE-080..083) > AC-04: submitting with no lines shows a message and sends no request 82ms
+ ✓ tests/frontend/unit/screens.test.jsx > S-03 claim editor (TC-FE-080..083) > AC-02: a line above ₹500 without a receipt is highlighted before submit 86ms
+ ✓ tests/frontend/unit/screens.test.jsx > S-03 claim editor (TC-FE-080..083) > AC-05: double-clicking confirm sends exactly one submit request 173ms
+ ✓ tests/frontend/unit/screens.test.jsx > S-03 claim editor (TC-FE-080..083) > a non-editable claim redirects to the detail page (B-04) 68ms
+ ✓ tests/frontend/unit/screens.test.jsx > S-03 claim editor (TC-FE-080..083) > validates a new line on the client before calling the API 341ms
+ ✓ tests/frontend/unit/screens.test.jsx > S-07 review queue bulk approve (TC-FE-090..091) > AC-10: one call with one key; "2 approved, 1 failed"; failed row shows its reason 298ms
+ ✓ tests/frontend/unit/screens.test.jsx > S-07 review queue bulk approve (TC-FE-090..091) > filters are validated and written to the request 515ms
+ ✓ tests/frontend/unit/screens.test.jsx > S-10 payout batch (TC-FE-100) > AC-11: export only for CREATED; then control summary and download, no export 160ms
+ ✓ tests/frontend/unit/screens.test.jsx > S-08 delegations (TC-FE-110) > AC-15: an overlap error is shown on the date fields 413ms
+ ✓ tests/frontend/unit/screens.test.jsx > S-12 audit trail (TC-FE-120) > renders read-only rows with no edit or delete controls (NFR-004) 73ms
+ ✓ tests/frontend/unit/screens.test.jsx > contract alignment (TC-FE-140..141) > My claims: sorting by Total sends sort=totalAmount, then -totalAmount (API-004 sort enum) 144ms
+ ✓ tests/frontend/unit/screens.test.jsx > contract alignment (TC-FE-140..141) > Dashboard: null average approval time shows an empty state, not "— h" (API-032) 64ms
+
+ Test Files  4 passed (4)
+      Tests  63 passed (63)
+   Start at  18:55:15
+   Duration  15.86s (environment 64%, setup 17%, tests 11%, import 5%, transform 2%, worker 1%)
+
