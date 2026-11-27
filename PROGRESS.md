@@ -18,7 +18,7 @@ Updated at the end of every task (CLAUDE.md §15). Report actual results only.
 | 3 | API design | Not started | API catalogue API-001..API-036 fixed in `architecture/SPEC.md`; `api-contracts.yaml` still the template placeholder |
 | 4a | Policy engine (test-first) | Done | Base fixes (API-001 path, error shape, trace ID); 9 rules + `PolicyEngine` + `RoutingDecider`, tests written and confirmed failing first |
 | 4b | Approval chain + delegation | Done | Chain engine, step authorizer, delegation rules, sample draw — JUnit tests written and confirmed failing first |
-| 4c | Remaining backend | Done (runs in Docker) | Flyway V001–V005, least-privilege app role, JWT login, API-002..038, idempotency, metrics, demo users. Contract `api-contracts.yaml` done (redocly: 0 errors). Gaps: full Python seed (DATA-001..003); pytest suite |
+| 4c | Remaining backend | Done (runs in Docker) | Flyway V001–V005, least-privilege app role, JWT login, API-002..038, idempotency, metrics, demo users. Contract `api-contracts.yaml` done (redocly: 0 errors). Synthetic org seeded automatically on first `docker compose up` (150 employees, 8 departments, hierarchy, bank details: DATA-001/002/004/005; verified on an empty DB). Gaps: 3,000 historical claims (DATA-003); pytest suite |
 | 5 | Frontend | Done (merged PR #4) | 13 screens wired to the API; integrated end to end on `feature/integration` (payout create response fix, nginx DNS re-resolve) |
 | 6 | Validation | Not started | |
 | 7 | Deployment | In progress | One-command Compose stack incl. Swagger UI; CI deploys the stack on the runner and runs smoke + 11 browser E2E, npm audit, Trivy image scan, GHCR publish on main. Full seed not done |

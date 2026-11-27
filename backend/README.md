@@ -12,7 +12,8 @@ docker compose up -d --build        # postgres, backend, frontend, prometheus, g
 
 - API: http://localhost:8080/api/v1 (also via the frontend proxy http://localhost:3000/api/v1)
 - On start the backend runs Flyway migrations `../database/migrations/V001..V005` as the database owner, then connects as the least-privilege role `expenseflow_app` (SELECT/INSERT only on `audit_events`).
-- With `SEED_DEMO_USERS=true` (Compose default) it seeds 8 synthetic demo users once: `financehead`, `auditor`, `auditor2`, `manager`, `employee`, `employee2`, `nomanager`, `staff` — each `<name>@expenseflow.test`, password from `SEED_DEMO_PASSWORD`. Set your own values in `.env`.
+- With `SEED_DEMO_USERS=true` (Compose default) it seeds the **synthetic organisation automatically** on first start (DATA-001/002/004/005, `database/SPEC.md` §7.1): 8 departments, **150 employees** with a reporting hierarchy (Operations and IT Support heads have no manager), synthetic bank accounts and IFSC codes. Deterministic (fixed seed 20261127), idempotent (skipped once 150 users exist). Nothing to run by hand after `git clone` + `docker compose up`.
+- Demo logins (password `SEED_DEMO_PASSWORD`): `financehead`, `auditor`, `auditor2`, `manager`, `employee`, `employee2`, `nomanager`, `staff` — each `<name>@expenseflow.test`. The other 142 employees exist as data only (unusable random password).
 - Actuator (`/actuator/health`, `/actuator/prometheus`) is on port 8081, which is **not** published: only Prometheus and the container healthcheck reach it.
 - Reset everything: `docker compose down -v` (the audit table cannot be truncated by design).
 
