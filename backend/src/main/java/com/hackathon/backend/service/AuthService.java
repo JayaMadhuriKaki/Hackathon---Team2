@@ -50,9 +50,12 @@ public class AuthService {
 
 	private final int loginsPerMinute;
 
+	private final int loginsPerIpPerMinute;
+
 	public AuthService(UserRepository users, DepartmentRepository departments, PasswordEncoder passwords,
 			JwtService jwt, RateLimiter rateLimiter, AuditService audit, CapabilityService capabilities,
-			@Value("${app.rate-limit.login-per-minute:5}") int loginsPerMinute) {
+			@Value("${app.rate-limit.login-per-minute:5}") int loginsPerMinute,
+			@Value("${app.rate-limit.login-per-ip-per-minute:30}") int loginsPerIpPerMinute) {
 		this.users = users;
 		this.departments = departments;
 		this.passwords = passwords;
@@ -61,19 +64,25 @@ public class AuthService {
 		this.audit = audit;
 		this.capabilities = capabilities;
 		this.loginsPerMinute = loginsPerMinute;
+		this.loginsPerIpPerMinute = loginsPerIpPerMinute;
 		this.dummyHash = passwords.encode(java.util.UUID.randomUUID().toString());
 	}
 
 	@Transactional(noRollbackFor = ApiException.class)
 	public LoginResponse login(LoginRequest request, String clientIp) {
-		rateLimiter.check("login:" + clientIp, loginsPerMinute);
 		String email = request.email().trim();
+		// Failed attempts per account per IP (password guessing), plus a looser cap on all attempts
+		// per IP; successful sign-ins of people switching demo roles are not penalised (SPEC-Q-13).
+		String failKey = "login-fail:" + clientIp + ":" + email.toLowerCase(java.util.Locale.ROOT);
+		rateLimiter.checkNotExceeded(failKey, loginsPerMinute);
+		rateLimiter.check("login-ip:" + clientIp, loginsPerIpPerMinute);
 		Optional<User> found = users.findByEmailIgnoreCase(email);
 		boolean ok = found.isPresent() && passwords.matches(request.password(), found.get().getPasswordHash());
 		if (found.isEmpty()) {
 			passwords.matches(request.password(), dummyHash);
 		}
 		if (!ok) {
+			rateLimiter.record(failKey);
 			audit.event(AuditAction.LOGIN_FAILED, EntityType.USER, found.map(User::getId).orElse(null))
 				.details(Map.of("email", email))
 				.save();

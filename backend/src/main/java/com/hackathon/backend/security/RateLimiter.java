@@ -1,6 +1,5 @@
 package com.hackathon.backend.security;
 
-import java.time.Instant;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -37,11 +36,23 @@ public class RateLimiter {
 		}
 	}
 
-	private record Window(long minute, int count) {
+	/** 429 if {@code key} has already reached {@code perMinute} this minute; does not count. */
+	public void checkNotExceeded(String key, int perMinute) {
+		long minute = clock.now().getEpochSecond() / 60;
+		Window w = windows.get(key);
+		if (w != null && w.minute == minute && w.count >= perMinute) {
+			throw new ApiException(ErrorCode.RATE_LIMITED, "Too many requests. Wait a minute and try again.");
+		}
 	}
 
-	Instant now() {
-		return clock.now();
+	/** Counts one event for {@code key} in the current minute (e.g. a failed login). */
+	public void record(String key) {
+		long minute = clock.now().getEpochSecond() / 60;
+		windows.compute(key, (k, old) -> (old == null || old.minute != minute) ? new Window(minute, 1)
+				: new Window(minute, old.count + 1));
+	}
+
+	private record Window(long minute, int count) {
 	}
 
 }

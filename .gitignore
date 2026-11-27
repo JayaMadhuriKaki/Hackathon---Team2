@@ -24,3 +24,6 @@ test-results/
 
 # Local receipt and payout files when running the backend outside Docker
 backend/data/
+
+# Vitest cache when run from the repo root
+/node_modules/
