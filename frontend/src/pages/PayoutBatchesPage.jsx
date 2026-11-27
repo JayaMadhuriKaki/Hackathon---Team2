@@ -48,8 +48,10 @@ export default function PayoutBatchesPage() {
 
   async function doCreate() {
     try {
-      const batch = await create.run([...selected])
-      if (!batch) return
+      // API-026 returns BatchDetail { batch, claims } (architecture/api-contracts.yaml)
+      const created = await create.run([...selected])
+      if (!created) return
+      const batch = created.batch ?? created
       setConfirmOpen(false)
       toast.success(`Batch ${batch.batchNumber} created.`)
       navigate(`/payout-batches/${batch.batchId}`)
