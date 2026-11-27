@@ -21,5 +21,3 @@ __pycache__/
 playwright-report/
 test-results/
 
-# Local Claude Code instructions (kept off the remote)
-CLAUDE.md
