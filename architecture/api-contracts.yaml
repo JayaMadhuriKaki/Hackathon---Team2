@@ -1,25 +1,70 @@
 openapi: 3.0.3
 info:
-  title: "<Project Name> API"
-  version: 0.1.0
+  title: ExpenseFlow API
+  version: 1.0.0
   description: |
-    Contract-first API for the hackathon project.
-    Conventions: base path /api/v1, camelCase JSON, ISO-8601 UTC dates,
-    standard Error shape, page/pageSize pagination.
-    Each operation carries x-api-id (API-###) and x-requirements (FR/NFR IDs).
-  contact:
-    name: "<Team name>"
+    Contract for the ExpenseFlow backend (Spring Boot 4.1, JDK 21) - expense claims and
+    policy-driven approvals. This document describes the API **as implemented** in
+    `backend/src/main/java/com/hackathon/backend/controller/`. Operation IDs, roles and
+    requirement IDs come from `architecture/SPEC.md` section 7 and `backend/SPEC.md` section 6.
+
+    **Conventions (architecture/SPEC.md section 8)**
+    - Base path `/api/v1`. JSON fields are camelCase.
+    - Authentication: `Authorization: Bearer <JWT>` (HS256, 8 h by default) on every operation
+      except API-001 and API-002.
+    - **Money** in JSON is a string with exactly two decimals, e.g. `"27450.00"` (INR). Request
+      amounts are strings with at most two decimals. Never floating point.
+    - Dates are `YYYY-MM-DD`; timestamps are ISO-8601 UTC. "Today" and date filters on
+      timestamps use IST (ASM-002).
+    - Lists use `page` (1-based, default 1), `pageSize` (1-100, default 20) and, where
+      supported, `sort` (`field` or `-field`). List responses are `{items, page, pageSize, total}`.
+    - **Unknown JSON fields are rejected** with `400 VALIDATION_FAILED` (mass-assignment guard).
+    - Every response carries an `X-Trace-Id` header. A safe inbound `X-Trace-Id`
+      (`^[A-Za-z0-9-]{8,64}$`) is reused, otherwise a UUID is generated.
+    - Every error uses `ErrorResponse` `{code, message, details, traceId}`; no stack traces.
+      A JSON body sent with an unsupported `Content-Type` returns `415 UNSUPPORTED_FILE_TYPE`;
+      an unsupported HTTP method returns `405 METHOD_NOT_ALLOWED`; an unexpected failure
+      returns `500 INTERNAL_ERROR`.
+    - **Idempotency** (API-012, 015, 016, 017, 023, 026, 028): optional `Idempotency-Key`
+      header. Same key + same request replays the stored response; same key + different
+      request is `422 IDEMPOTENCY_KEY_REUSED`; a duplicate that arrives while the first is
+      still running is `409 STATE_CONFLICT`. Keys are kept 24 hours.
+    - Visibility (CL-15, ASM-008): a claim that exists but is not visible to the caller is
+      reported as `404 NOT_FOUND`, never 403 (B-10).
+
+    **Vendor extensions**: `x-api-id` (API-###), `x-requirements` (FR/NFR/POL/CL/ASM IDs),
+    `x-roles` (roles from `UserRole` or derived capabilities: `ANY` = any signed-in user,
+    `PUBLIC`, `CLAIMANT`, `CURRENT_STEP_APPROVER`, `MANAGER` = `canDelegate`,
+    `ADMIN_CAPABILITY` = role `FINANCE_HEAD` or `ADMIN`), `x-rate-limit`.
 servers:
-  - url: http://localhost:8000/api/v1
-    description: Local
-  - url: https://<demo-host>/api/v1
-    description: Demo
+  - url: http://localhost:8080/api/v1
+    description: Local Docker Compose backend (used by Swagger UI "Try it out" on :8082)
+  - url: /api/v1
+    description: Relative to the host serving the backend (frontend nginx or Vite proxy)
 
 tags:
-  - name: Health
+  - name: Platform
+    description: Health check (API-001)
   - name: Auth
-  - name: Items
-    description: "Placeholder resource — rename to your main domain entity"
+    description: Login and the signed-in user (API-002, API-003)
+  - name: Reference
+    description: Reference data for forms and filters (API-036, API-037)
+  - name: Claims
+    description: Claims, line items, receipts, submit and claim audit history (API-004 to API-013)
+  - name: Approvals
+    description: Approver queue and approver actions (API-014 to API-018)
+  - name: Delegations
+    description: Delegation while on leave (API-019 to API-021, API-038)
+  - name: Review Queue
+    description: Finance auditor review queue and bulk approve (API-022, API-023)
+  - name: Payouts
+    description: Payout batches and the bank-file export (API-024 to API-029)
+  - name: Dashboard
+    description: Aggregate figures for finance auditors and admins (API-030 to API-032)
+  - name: Audit
+    description: Full append-only audit trail (API-033)
+  - name: Policy
+    description: Policy as configuration (API-034, API-035)
 
 security:
   - bearerAuth: []
@@ -27,139 +72,1919 @@ security:
 paths:
   /health:
     get:
-      tags: [Health]
       operationId: getHealth
-      summary: Service health check
+      summary: Application and database health
+      description: Public app-level health used by the frontend status card. Always 200; `database` reports `UP` or `DOWN`.
+      tags: [Platform]
       x-api-id: API-001
       x-requirements: [NFR-006]
+      x-roles: [PUBLIC]
       security: []
       responses:
-        "200":
-          description: Service is up
+        '200':
+          description: Health status
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/XTraceId'
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  status: { type: string, example: ok }
-                  version: { type: string, example: 0.1.0 }
+                $ref: '#/components/schemas/HealthResponse'
+              example:
+                status: UP
+                database: UP
+                timestamp: '2026-11-27T09:30:00Z'
 
   /auth/login:
     post:
-      tags: [Auth]
       operationId: login
-      summary: Log in and receive an access token
+      summary: Sign in with email and password
+      description: |
+        Seeded synthetic users sign in with email and password (Q-22, SPEC-Q-07 proposed) and receive
+        a bearer JWT. Every attempt is audited (`LOGIN_SUCCEEDED` / `LOGIN_FAILED`) without the password.
+        Rate-limited per client IP (all attempts count). A wrong email and a wrong password give the
+        same `401` response.
+      tags: [Auth]
       x-api-id: API-002
-      x-requirements: [NFR-002]
+      x-requirements: [Q-22, SPEC-Q-07, SPEC-Q-13]
+      x-roles: [PUBLIC]
+      x-rate-limit:
+        limit: 5
+        window: 1m
+        scope: client IP
       security: []
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: "#/components/schemas/LoginRequest" }
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+            example:
+              email: ananya.rao@expenseflow.example
+              password: demo-password
       responses:
-        "200":
-          description: Logged in
+        '200':
+          description: Signed in
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/XTraceId'
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/LoginResponse" }
-        "400": { $ref: "#/components/responses/BadRequest" }
-        "401": { $ref: "#/components/responses/Unauthorized" }
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+              example:
+                accessToken: eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIwMTkzN2MyYSJ9.c2lnbmF0dXJl
+                tokenType: Bearer
+                expiresAt: '2026-11-27T17:30:00Z'
+                user:
+                  userId: 01937c2a-1000-7000-8000-000000000142
+                  employeeCode: EMP0142
+                  name: Ananya Rao
+                  email: ananya.rao@expenseflow.example
+                  role: EMPLOYEE
+                  departmentId: 01937c2a-0000-7000-8000-000000000001
+                  departmentName: Consulting
+                  managerId: 01937c2a-1000-7000-8000-000000000017
+                  isManager: false
+                  isApprover: false
+                  canDelegate: false
+                  isAdmin: false
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          description: Email or password is incorrect (`UNAUTHENTICATED`)
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/XTraceId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                code: UNAUTHENTICATED
+                message: Email or password is incorrect
+                details: null
+                traceId: 3f1c2b9e-7d4a-4c1e-9b2f-0a6d8e5c4b21
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
 
-  /items:
+  /me:
     get:
-      tags: [Items]
-      operationId: listItems
-      summary: List items (paginated)
+      operationId: getMe
+      summary: The signed-in user and derived capabilities
+      description: Returns the user profile and capabilities (`isManager`, `isApprover`, `canDelegate`, `isAdmin`) so the UI never guesses (architecture/SPEC.md section 2).
+      tags: [Auth]
       x-api-id: API-003
-      x-requirements: [FR-001]
+      x-requirements: [CL-10, CL-13, CL-15]
+      x-roles: [ANY]
+      responses:
+        '200':
+          description: Current user
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/XTraceId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Me'
+              examples:
+                employee:
+                  $ref: '#/components/examples/MeExample'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /departments:
+    get:
+      operationId: listDepartments
+      summary: List departments
+      description: All departments ordered by name, for review-queue and dashboard filters.
+      tags: [Reference]
+      x-api-id: API-036
+      x-requirements: [FR-009, FR-015, DATA-001]
+      x-roles: [ANY]
+      responses:
+        '200':
+          description: Departments
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/XTraceId'
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Department'
+              example:
+                - departmentId: 01937c2a-0000-7000-8000-000000000001
+                  name: Consulting
+                - departmentId: 01937c2a-0000-7000-8000-000000000002
+                  name: Finance
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /policy-rules/client-config:
+    get:
+      operationId: getClientConfig
+      summary: Policy values needed for client-side validation
+      description: Active receipt threshold, tier-1 cities, categories, allowed receipt types and maximum receipt size. Client validation is for user experience only; the backend re-checks everything.
+      tags: [Reference]
+      x-api-id: API-037
+      x-requirements: [POL-005, CL-08, NFR-001]
+      x-roles: [ANY]
+      responses:
+        '200':
+          description: Client configuration
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/XTraceId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClientConfig'
+              example:
+                receiptMandatoryAbove: '500.00'
+                tier1Cities: [Kolkata, Mumbai, Delhi, Chennai, Bangalore]
+                categories: [MEALS, HOTEL, LOCAL_CAB]
+                allowedReceiptTypes: [application/pdf, image/jpeg, image/png]
+                maxReceiptBytes: 5242880
+                configVersion: 1
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /claims:
+    get:
+      operationId: listMyClaims
+      summary: List the caller's own claims
+      description: Only claims where the caller is the claimant, whatever the caller's role (FR-019, CL-15). Default sort `-createdAt`.
+      tags: [Claims]
+      x-api-id: API-004
+      x-requirements: [FR-019, CL-15, NFR-005]
+      x-roles: [ANY]
       parameters:
-        - $ref: "#/components/parameters/Page"
-        - $ref: "#/components/parameters/PageSize"
         - name: status
           in: query
-          schema: { type: string, enum: [active, archived] }
+          required: false
+          description: Only claims in this state.
+          schema:
+            $ref: '#/components/schemas/ClaimStatus'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
         - name: sort
           in: query
-          description: Field to sort by; prefix with - for descending
-          schema: { type: string, example: -createdAt }
+          required: false
+          description: Sort field, `-` prefix for descending. Default `-createdAt`.
+          schema:
+            type: string
+            enum: [createdAt, -createdAt, submittedAt, -submittedAt, totalAmount, -totalAmount, claimNumber, -claimNumber, status, -status]
       responses:
-        "200":
-          description: A page of items
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/ItemPage" }
-        "401": { $ref: "#/components/responses/Unauthorized" }
-    post:
-      tags: [Items]
-      operationId: createItem
-      summary: Create an item
-      x-api-id: API-004
-      x-requirements: [FR-002]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: "#/components/schemas/ItemCreate" }
-      responses:
-        "201":
-          description: Created
+        '200':
+          description: A page of the caller's claims
           headers:
-            Location:
-              schema: { type: string }
+            X-Trace-Id:
+              $ref: '#/components/headers/XTraceId'
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/Item" }
-        "400": { $ref: "#/components/responses/BadRequest" }
-        "401": { $ref: "#/components/responses/Unauthorized" }
-
-  /items/{itemId}:
-    parameters:
-      - $ref: "#/components/parameters/ItemId"
-    get:
-      tags: [Items]
-      operationId: getItem
-      summary: Get one item
+              schema:
+                $ref: '#/components/schemas/ClaimSummaryPage'
+              example:
+                items:
+                  - claimId: 01937c2a-5b1e-7c3d-9a4f-2b6e8d1c0a11
+                    claimNumber: CLM-2026-01534
+                    status: PENDING_MANAGER
+                    total: '27450.00'
+                    createdAt: '2026-11-25T04:10:00Z'
+                    submittedAt: '2026-11-25T05:00:00Z'
+                    decidedAt: null
+                    lineCount: 3
+                page: 1
+                pageSize: 20
+                total: 1
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    post:
+      operationId: createClaim
+      summary: Create a draft claim
+      description: Creates an empty `DRAFT` claim owned by the caller and assigns its `claimNumber` (T-01, audit `CLAIM_CREATED`). No request body is read.
+      tags: [Claims]
       x-api-id: API-005
-      x-requirements: [FR-001]
+      x-requirements: [FR-001, FR-002]
+      x-roles: [ANY]
       responses:
-        "200":
-          description: The item
+        '201':
+          description: Draft created
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/XTraceId'
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/Item" }
-        "401": { $ref: "#/components/responses/Unauthorized" }
-        "404": { $ref: "#/components/responses/NotFound" }
-    patch:
-      tags: [Items]
-      operationId: updateItem
-      summary: Partially update an item
+              schema:
+                $ref: '#/components/schemas/ClaimDetail'
+              examples:
+                draft:
+                  $ref: '#/components/examples/ClaimDetailDraftExample'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /claims/{claimId}:
+    parameters:
+      - $ref: '#/components/parameters/ClaimId'
+    get:
+      operationId: getClaim
+      summary: Get a claim with lines, policy results, steps, comments and allowed actions
+      description: |
+        Visible to the claimant; to whoever may act on the current `PENDING` step (incl. active delegates
+        and pool-role holders, never the claimant); to finance auditors for a `SAMPLE_AUDIT_PENDING`
+        claim that is not theirs; and to anyone who has acted on the claim. Otherwise `404`
+        (CL-15, ASM-008, B-10). Receipt hashes are never returned.
+      tags: [Claims]
       x-api-id: API-006
-      x-requirements: [FR-003]
+      x-requirements: [FR-019, CL-15, ASM-008, NFR-002, NFR-005]
+      x-roles: [CLAIMANT, CURRENT_STEP_APPROVER, FINANCE_AUDITOR]
+      responses:
+        '200':
+          description: Claim detail
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/XTraceId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClaimDetail'
+              examples:
+                pendingManager:
+                  $ref: '#/components/examples/ClaimDetailPendingExample'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /claims/{claimId}/line-items:
+    parameters:
+      - $ref: '#/components/parameters/ClaimId'
+    post:
+      operationId: addLineItem
+      summary: Add a line item to a draft or sent-back claim
+      description: |
+        Claimant only, while the claim is `DRAFT` or `SENT_BACK` (B-04). Field rules (architecture/SPEC.md 4.4):
+        `expenseDate` not in the future (IST); hotel lines need `city`, `checkInDate`, `checkOutDate`
+        (check-out after check-in) and `expenseDate` = `checkInDate` (ASM-005, ASM-S-03); non-hotel lines
+        must not send `city` or stay dates. The claim total is recomputed. Audit `LINE_ADDED`.
+      tags: [Claims]
+      x-api-id: API-007
+      x-requirements: [FR-001, FR-002, CL-05, CL-08, ASM-005]
+      x-roles: [CLAIMANT]
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: "#/components/schemas/ItemUpdate" }
+            schema:
+              $ref: '#/components/schemas/LineItemRequest'
+            examples:
+              hotel:
+                $ref: '#/components/examples/HotelLineRequestExample'
+              meal:
+                summary: Meal line
+                value:
+                  category: MEALS
+                  amount: '1200.00'
+                  expenseDate: '2026-11-24'
+                  vendor: Saravana Bhavan
+                  receiptNumber: SB-88231
       responses:
-        "200":
-          description: Updated
+        '201':
+          description: Line added
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/XTraceId'
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/Item" }
-        "400": { $ref: "#/components/responses/BadRequest" }
-        "401": { $ref: "#/components/responses/Unauthorized" }
-        "404": { $ref: "#/components/responses/NotFound" }
-    delete:
-      tags: [Items]
-      operationId: deleteItem
-      summary: Delete an item
-      x-api-id: API-007
-      x-requirements: [FR-004]
+              schema:
+                $ref: '#/components/schemas/LineItemView'
+              examples:
+                hotel:
+                  $ref: '#/components/examples/HotelLineViewExample'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/NotClaimant'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/StateConflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /claims/{claimId}/line-items/{lineItemId}:
+    parameters:
+      - $ref: '#/components/parameters/ClaimId'
+      - $ref: '#/components/parameters/LineItemId'
+    put:
+      operationId: updateLineItem
+      summary: Replace a line item
+      description: Same rules as API-007; the line must belong to the claim. Audit `LINE_UPDATED`.
+      tags: [Claims]
+      x-api-id: API-008
+      x-requirements: [FR-001, FR-002, CL-05, CL-08, ASM-005]
+      x-roles: [CLAIMANT]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LineItemRequest'
+            examples:
+              hotel:
+                $ref: '#/components/examples/HotelLineRequestExample'
       responses:
-        "204": { description: Deleted }
-        "401": { $ref: "#/components/responses/Unauthorized" }
-        "404": { $ref: "#/components/responses/NotFound" }
+        '200':
+          description: Line updated
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/XTraceId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LineItemView'
+              examples:
+                hotel:
+                  $ref: '#/components/examples/HotelLineViewExample'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/NotClaimant'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/StateConflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    delete:
+      operationId: deleteLineItem
+      summary: Delete a line item
+      description: Claimant only, `DRAFT` or `SENT_BACK`. The line's receipt is deleted too and the total recomputed. Audit `LINE_DELETED`.
+      tags: [Claims]
+      x-api-id: API-009
+      x-requirements: [FR-001, FR-002]
+      x-roles: [CLAIMANT]
+      responses:
+        '204':
+          description: Line deleted
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/XTraceId'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/NotClaimant'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/StateConflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /claims/{claimId}/line-items/{lineItemId}/receipt:
+    parameters:
+      - $ref: '#/components/parameters/ClaimId'
+      - $ref: '#/components/parameters/LineItemId'
+    post:
+      operationId: uploadReceipt
+      summary: Upload (or replace) the receipt of a line item
+      description: |
+        Claimant only, `DRAFT` or `SENT_BACK`. One receipt per line; a new upload replaces the old one.
+        The type is detected from the file content (magic bytes), not the name or header: PDF, JPEG or PNG
+        only (`415`). Maximum 5 MB (`413`); an empty file is `400`. The SHA-256 is stored for POL-007 and
+        never returned. Rate-limited per user. Audit `RECEIPT_UPLOADED`.
+      tags: [Claims]
+      x-api-id: API-010
+      x-requirements: [FR-001, POL-005, POL-007, Q-21, SPEC-Q-06]
+      x-roles: [CLAIMANT]
+      x-rate-limit:
+        limit: 30
+        window: 1m
+        scope: user
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/ReceiptUpload'
+            encoding:
+              file:
+                contentType: application/pdf, image/jpeg, image/png
+      responses:
+        '201':
+          description: Receipt stored
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/XTraceId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReceiptView'
+              example:
+                receiptId: 01937c2a-7a00-7000-8000-0000000000a1
+                contentType: application/pdf
+                sizeBytes: 184321
+                uploadedAt: '2026-11-25T04:20:00Z'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/NotClaimant'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/StateConflict'
+        '413':
+          $ref: '#/components/responses/FileTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedFileType'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    get:
+      operationId: downloadReceipt
+      summary: Download a line item's receipt
+      description: Served inline with `X-Content-Type-Options nosniff` and `Cache-Control private, no-store`, only to users who can view the claim (NFR-002). `404` if the claim is not visible, the line is not on the claim, or the line has no receipt.
+      tags: [Claims]
+      x-api-id: API-011
+      x-requirements: [NFR-002, FR-019, CL-15]
+      x-roles: [CLAIMANT, CURRENT_STEP_APPROVER, FINANCE_AUDITOR]
+      responses:
+        '200':
+          description: The receipt file
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/XTraceId'
+            Content-Disposition:
+              description: Inline, file name `receipt-<claimNumber>-line-<lineNo>.<pdf|png|jpg>`
+              schema:
+                type: string
+              example: inline; filename="receipt-CLM-2026-01534-line-1.pdf"
+            X-Content-Type-Options:
+              schema:
+                type: string
+                enum: [nosniff]
+            Cache-Control:
+              schema:
+                type: string
+                enum: ['private, no-store']
+          content:
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+            image/png:
+              schema:
+                type: string
+                format: binary
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /claims/{claimId}/submit:
+    parameters:
+      - $ref: '#/components/parameters/ClaimId'
+    post:
+      operationId: submitClaim
+      summary: Submit a claim and run the policy engine
+      description: |
+        Claimant only, from `DRAFT` or `SENT_BACK`. In one transaction (architecture/SPEC.md 3.3):
+        checks at least one line (`422 CLAIM_HAS_NO_LINES`) and a receipt on every line above
+        `receipt.mandatory_above` (`422 RECEIPT_REQUIRED`, `details.lines[]`), state unchanged on failure
+        (ASM-003); on resubmission old steps become `SUPERSEDED` (CL-12); stores the config version; runs
+        POL-001..POL-009; then auto-rejects (any limit breach, CL-07), routes to the approval chain
+        (total above the auditor threshold, weekend or duplicate flag, or claimant is a finance head;
+        CL-02, CL-03, CL-16, ASM-004) or auto-approves with a 10% sample-audit draw (FR-011, CL-14).
+        The outcome is the returned `status`: `AUTO_REJECTED`, `PENDING_*`, `SAMPLE_AUDIT_PENDING` or `APPROVED`.
+      tags: [Claims]
+      x-api-id: API-012
+      x-requirements: [FR-003, FR-004, FR-005, FR-011, POL-001, POL-002, POL-003, POL-004, POL-005, POL-006, POL-007, POL-008, POL-009, CL-02, CL-03, CL-07, CL-09, CL-12, CL-14, CL-16]
+      x-roles: [CLAIMANT]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Submitted; the outcome is in `status`
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/XTraceId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClaimDetail'
+              examples:
+                routed:
+                  $ref: '#/components/examples/ClaimDetailPendingExample'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/NotClaimant'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/StateConflict'
+        '422':
+          description: '`CLAIM_HAS_NO_LINES`, `RECEIPT_REQUIRED` (per-line `details.lines`) or `IDEMPOTENCY_KEY_REUSED`'
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/XTraceId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                receiptRequired:
+                  summary: A line above 500 INR has no receipt
+                  value:
+                    code: RECEIPT_REQUIRED
+                    message: Upload a receipt for every line above INR 500.00
+                    details:
+                      lines:
+                        - lineItemId: 01937c2a-6c00-7000-8000-000000000101
+                          code: RECEIPT_REQUIRED
+                          message: Line 1 is above INR 500.00 and needs a receipt
+                    traceId: 3f1c2b9e-7d4a-4c1e-9b2f-0a6d8e5c4b21
+                noLines:
+                  summary: Empty claim
+                  value:
+                    code: CLAIM_HAS_NO_LINES
+                    message: Add at least one line item before submitting
+                    details: null
+                    traceId: 3f1c2b9e-7d4a-4c1e-9b2f-0a6d8e5c4b21
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /claims/{claimId}/audit-events:
+    parameters:
+      - $ref: '#/components/parameters/ClaimId'
+    get:
+      operationId: listClaimAuditEvents
+      summary: Audit history of one claim
+      description: Oldest first. Anyone who can view the claim (ASM-010).
+      tags: [Claims]
+      x-api-id: API-013
+      x-requirements: [FR-018, ASM-010]
+      x-roles: [CLAIMANT, CURRENT_STEP_APPROVER, FINANCE_AUDITOR]
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: A page of audit events
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/XTraceId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditEventPage'
+              examples:
+                history:
+                  $ref: '#/components/examples/AuditEventPageExample'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /approvals:
+    get:
+      operationId: listMyApprovals
+      summary: Claims waiting for the caller's approval
+      description: |
+        `PENDING` manager steps assigned to the caller or to someone the caller is the active delegate for
+        (`onBehalfOf` set), plus `PENDING_FINANCE_HEAD` claims for finance heads. Never the caller's own
+        claims. Empty for users who are not approvers. Ordered by `pendingSince`, oldest first. Auditor
+        steps are in API-022.
+      tags: [Approvals]
+      x-api-id: API-014
+      x-requirements: [FR-005, FR-008, CL-15]
+      x-roles: [ANY]
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: A page of approval items
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/XTraceId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApprovalItemPage'
+              example:
+                items:
+                  - claimId: 01937c2a-5b1e-7c3d-9a4f-2b6e8d1c0a11
+                    claimNumber: CLM-2026-01534
+                    status: PENDING_MANAGER
+                    total: '27450.00'
+                    claimant:
+                      userId: 01937c2a-1000-7000-8000-000000000142
+                      name: Ananya Rao
+                      employeeCode: EMP0142
+                    department: Consulting
+                    stepType: MANAGER
+                    submittedAt: '2026-11-25T05:00:00Z'
+                    pendingSince: '2026-11-25T05:00:00Z'
+                    onBehalfOf: null
+                    flags: [WEEKEND]
+                page: 1
+                pageSize: 20
+                total: 1
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /claims/{claimId}/approve:
+    parameters:
+      - $ref: '#/components/parameters/ClaimId'
+    post:
+      operationId: approveClaim
+      summary: Approve the current step (or a sample audit)
+      description: |
+        Claim must be `PENDING_*` or `SAMPLE_AUDIT_PENDING` (`409` otherwise). The claimant acting on their
+        own claim gets `422 SELF_APPROVAL_FORBIDDEN` first (B-02); any other caller who can see the claim
+        but is not the current-step approver gets `403 NOT_CURRENT_APPROVER`. Approving activates the next
+        step or, on the last step, sets `APPROVED` (T-08, T-09). A finance auditor approving a sample audit
+        sets `APPROVED` (T-12, CL-14). Optional comment.
+      tags: [Approvals]
+      x-api-id: API-015
+      x-requirements: [FR-005, FR-008, CL-03, CL-09, CL-13, CL-14, CL-16]
+      x-roles: [CURRENT_STEP_APPROVER, FINANCE_AUDITOR]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApproveRequest'
+            example:
+              comment: Receipts verified against the client visit.
+      responses:
+        '200':
+          description: Approved; the new state is in `status`
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/XTraceId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClaimDetail'
+              examples:
+                approved:
+                  $ref: '#/components/examples/ClaimDetailPendingExample'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/NotCurrentApprover'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/StateConflict'
+        '422':
+          description: '`SELF_APPROVAL_FORBIDDEN` or `IDEMPOTENCY_KEY_REUSED`'
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/XTraceId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                selfApproval:
+                  $ref: '#/components/examples/SelfApprovalError'
+                keyReused:
+                  $ref: '#/components/examples/IdempotencyKeyReusedError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /claims/{claimId}/reject:
+    parameters:
+      - $ref: '#/components/parameters/ClaimId'
+    post:
+      operationId: rejectClaim
+      summary: Reject a claim outright (comment mandatory)
+      description: |
+        Same actor and state rules as API-015. A non-blank `comment` is mandatory (`422 COMMENT_REQUIRED`,
+        CL-04). The claim becomes `REJECTED` (T-10, or T-13 for a sample audit) and the comment is stored.
+      tags: [Approvals]
+      x-api-id: API-016
+      x-requirements: [FR-020, CL-04, CL-14]
+      x-roles: [CURRENT_STEP_APPROVER, FINANCE_AUDITOR]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DecisionRequest'
+            example:
+              comment: Hotel booked for a personal stay; not reimbursable.
+      responses:
+        '200':
+          description: Rejected
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/XTraceId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClaimDetail'
+              examples:
+                rejected:
+                  $ref: '#/components/examples/ClaimDetailPendingExample'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/NotCurrentApprover'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/StateConflict'
+        '422':
+          description: '`COMMENT_REQUIRED`, `SELF_APPROVAL_FORBIDDEN` or `IDEMPOTENCY_KEY_REUSED`'
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/XTraceId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                commentRequired:
+                  $ref: '#/components/examples/CommentRequiredError'
+                selfApproval:
+                  $ref: '#/components/examples/SelfApprovalError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /claims/{claimId}/send-back:
+    parameters:
+      - $ref: '#/components/parameters/ClaimId'
+    post:
+      operationId: sendBackClaim
+      summary: Send a claim back to the claimant for clarification
+      description: |
+        Current-step approver only, claim in `PENDING_*` (not sample audits). A non-blank `comment` is
+        mandatory (SPEC-Q-03). The claim becomes `SENT_BACK` (T-11); on resubmission the chain restarts
+        (CL-12).
+      tags: [Approvals]
+      x-api-id: API-017
+      x-requirements: [FR-007, CL-12, SPEC-Q-03]
+      x-roles: [CURRENT_STEP_APPROVER]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DecisionRequest'
+            example:
+              comment: Please attach the hotel invoice instead of the booking confirmation.
+      responses:
+        '200':
+          description: Sent back
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/XTraceId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClaimDetail'
+              examples:
+                sentBack:
+                  $ref: '#/components/examples/ClaimDetailPendingExample'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/NotCurrentApprover'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/StateConflict'
+        '422':
+          description: '`COMMENT_REQUIRED`, `SELF_APPROVAL_FORBIDDEN` or `IDEMPOTENCY_KEY_REUSED`'
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/XTraceId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                commentRequired:
+                  $ref: '#/components/examples/CommentRequiredError'
+                keyReused:
+                  $ref: '#/components/examples/IdempotencyKeyReusedError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /claims/{claimId}/comments:
+    parameters:
+      - $ref: '#/components/parameters/ClaimId'
+    post:
+      operationId: addClaimComment
+      summary: Comment on a claim
+      description: The current-step approver, or a user (not the claimant) who has already acted on the claim. Others who can see the claim get `403 NOT_CURRENT_APPROVER`. Audit `COMMENT_ADDED`.
+      tags: [Approvals]
+      x-api-id: API-018
+      x-requirements: [FR-006]
+      x-roles: [CURRENT_STEP_APPROVER]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CommentRequest'
+            example:
+              body: Weekend cab trips were for the client go-live; fine by me.
+      responses:
+        '201':
+          description: Comment added
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/XTraceId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommentView'
+              example:
+                commentId: 01937c2a-8b00-7000-8000-0000000000c1
+                author:
+                  userId: 01937c2a-1000-7000-8000-000000000017
+                  name: Rahul Mehta
+                  employeeCode: EMP0017
+                body: Weekend cab trips were for the client go-live; fine by me.
+                createdAt: '2026-11-25T06:15:00Z'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/NotCurrentApprover'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /delegations:
+    get:
+      operationId: listDelegations
+      summary: Delegations the caller gave or received
+      description: Managers only (`canDelegate`, else `403`). Each item has `direction` `GIVEN` or `RECEIVED`; newest start date first.
+      tags: [Delegations]
+      x-api-id: API-019
+      x-requirements: [FR-008, ASM-007]
+      x-roles: [MANAGER]
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: A page of delegations
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/XTraceId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DelegationPage'
+              example:
+                items:
+                  - delegationId: 01937c2a-9a00-7000-8000-0000000000e1
+                    direction: GIVEN
+                    delegator:
+                      userId: 01937c2a-1000-7000-8000-000000000017
+                      name: Rahul Mehta
+                      employeeCode: EMP0017
+                    delegate:
+                      userId: 01937c2a-1000-7000-8000-000000000003
+                      name: Kavya Iyer
+                      employeeCode: EMP0003
+                    startDate: '2026-12-01'
+                    endDate: '2026-12-10'
+                    cancelledAt: null
+                    active: false
+                    createdAt: '2026-11-27T09:00:00Z'
+                page: 1
+                pageSize: 20
+                total: 1
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    post:
+      operationId: createDelegation
+      summary: Delegate manager approvals for a leave period
+      description: |
+        Managers only. The delegate must exist and be a `FINANCE_AUDITOR` or `FINANCE_HEAD` other than the
+        caller (CL-13, B-03; else `422 INVALID_DELEGATE`). Dates are inclusive IST dates; `endDate` before
+        `startDate` is `400`. A delegation overlapping another uncancelled one of the caller is
+        `422 DELEGATION_OVERLAP` (ASM-007). Delegation covers the caller's manager steps only and never
+        changes which steps exist. Audit `DELEGATION_CREATED`.
+      tags: [Delegations]
+      x-api-id: API-020
+      x-requirements: [FR-008, CL-13, ASM-007]
+      x-roles: [MANAGER]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateDelegationRequest'
+            example:
+              delegateId: 01937c2a-1000-7000-8000-000000000003
+              startDate: '2026-12-01'
+              endDate: '2026-12-10'
+      responses:
+        '201':
+          description: Delegation created
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/XTraceId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DelegationView'
+              examples:
+                created:
+                  $ref: '#/components/examples/DelegationViewExample'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          description: '`INVALID_DELEGATE` or `DELEGATION_OVERLAP`'
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/XTraceId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                invalidDelegate:
+                  summary: Delegate is not a finance auditor or finance head
+                  value:
+                    code: INVALID_DELEGATE
+                    message: The delegate must be a finance auditor or finance head other than yourself
+                    details: null
+                    traceId: 3f1c2b9e-7d4a-4c1e-9b2f-0a6d8e5c4b21
+                overlap:
+                  summary: Overlapping leave period
+                  value:
+                    code: DELEGATION_OVERLAP
+                    message: You already have a delegation in this period
+                    details: null
+                    traceId: 3f1c2b9e-7d4a-4c1e-9b2f-0a6d8e5c4b21
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /delegations/eligible-delegates:
+    get:
+      operationId: listEligibleDelegates
+      summary: Users who may be chosen as a delegate
+      description: Managers only. Finance auditors and finance heads other than the caller, ordered by name (CL-13).
+      tags: [Delegations]
+      x-api-id: API-038
+      x-requirements: [FR-008, CL-13]
+      x-roles: [MANAGER]
+      responses:
+        '200':
+          description: Eligible delegates
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/XTraceId'
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PersonRef'
+              example:
+                - userId: 01937c2a-1000-7000-8000-000000000003
+                  name: Kavya Iyer
+                  employeeCode: EMP0003
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /delegations/{delegationId}:
+    parameters:
+      - name: delegationId
+        in: path
+        required: true
+        description: Delegation ID
+        schema:
+          type: string
+          format: uuid
+    delete:
+      operationId: cancelDelegation
+      summary: Cancel a delegation
+      description: The delegator only; anyone else gets `404`. Sets `cancelledAt`; an already cancelled delegation is `409`. Audit `DELEGATION_CANCELLED`.
+      tags: [Delegations]
+      x-api-id: API-021
+      x-requirements: [FR-008]
+      x-roles: [MANAGER]
+      responses:
+        '204':
+          description: Cancelled
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/XTraceId'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/StateConflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /review-queue:
+    get:
+      operationId: getReviewQueue
+      summary: Finance auditor review queue with filters
+      description: |
+        `FINANCE_AUDITOR` only. `PENDING_AUDITOR` and `SAMPLE_AUDIT_PENDING` claims, never the caller's own,
+        ordered by `waitingSince` (oldest first). Filters (SPEC-Q-09, proposed): `fromDate`/`toDate` apply
+        to the submission date (IST); `minAmount`/`maxAmount` to the claim total; `category` matches any
+        line.
+      tags: [Review Queue]
+      x-api-id: API-022
+      x-requirements: [FR-009, CL-14, SPEC-Q-09]
+      x-roles: [FINANCE_AUDITOR]
+      parameters:
+        - $ref: '#/components/parameters/DepartmentId'
+        - name: category
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/ExpenseCategory'
+        - name: minAmount
+          in: query
+          required: false
+          description: Minimum claim total (inclusive), rupees.
+          schema:
+            type: string
+            pattern: '^\d{1,10}(\.\d{1,2})?$'
+            example: '25000.00'
+        - name: maxAmount
+          in: query
+          required: false
+          description: Maximum claim total (inclusive), rupees.
+          schema:
+            type: string
+            pattern: '^\d{1,10}(\.\d{1,2})?$'
+            example: '100000.00'
+        - name: fromDate
+          in: query
+          required: false
+          description: Submitted on or after this IST date.
+          schema:
+            type: string
+            format: date
+        - name: toDate
+          in: query
+          required: false
+          description: Submitted on or before this IST date.
+          schema:
+            type: string
+            format: date
+        - name: flag
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [DUPLICATE, WEEKEND]
+        - name: queue
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [AUDITOR_STEP, SAMPLE_AUDIT]
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: A page of queue items
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/XTraceId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueueItemPage'
+              example:
+                items:
+                  - claimId: 01937c2a-5b1e-7c3d-9a4f-2b6e8d1c0a11
+                    claimNumber: CLM-2026-01534
+                    status: PENDING_AUDITOR
+                    queue: AUDITOR_STEP
+                    total: '27450.00'
+                    claimant:
+                      userId: 01937c2a-1000-7000-8000-000000000142
+                      name: Ananya Rao
+                      employeeCode: EMP0142
+                    department: Consulting
+                    categories: [HOTEL, LOCAL_CAB]
+                    flags: [DUPLICATE]
+                    submittedAt: '2026-11-25T05:00:00Z'
+                    waitingSince: '2026-11-26T03:30:00Z'
+                page: 1
+                pageSize: 20
+                total: 1
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /review-queue/bulk-approve:
+    post:
+      operationId: bulkApproveClaims
+      summary: Bulk approve claims from the review queue
+      description: |
+        `FINANCE_AUDITOR` only. 1-100 claim IDs (duplicates removed). Each claim goes through the API-015
+        logic in its own transaction; flagged claims are allowed (SPEC-Q-09). A claim that is not in
+        `PENDING_AUDITOR` or `SAMPLE_AUDIT_PENDING`, not found, or not approvable by the caller is reported
+        as `FAILED` with its error code; the request itself still returns `200`.
+      tags: [Review Queue]
+      x-api-id: API-023
+      x-requirements: [FR-010, CL-14, SPEC-Q-09]
+      x-roles: [FINANCE_AUDITOR]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BulkApproveRequest'
+            example:
+              claimIds:
+                - 01937c2a-5b1e-7c3d-9a4f-2b6e8d1c0a11
+                - 01937c2a-5b1e-7c3d-9a4f-2b6e8d1c0a12
+      responses:
+        '200':
+          description: Per-claim results
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/XTraceId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BulkResult'
+              example:
+                results:
+                  - claimId: 01937c2a-5b1e-7c3d-9a4f-2b6e8d1c0a11
+                    outcome: APPROVED
+                    code: null
+                    message: null
+                  - claimId: 01937c2a-5b1e-7c3d-9a4f-2b6e8d1c0a12
+                    outcome: FAILED
+                    code: STATE_CONFLICT
+                    message: Only claims in the review queue can be bulk approved (now APPROVED)
+                approved: 1
+                failed: 1
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/StateConflict'
+        '422':
+          description: '`IDEMPOTENCY_KEY_REUSED`'
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/XTraceId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                keyReused:
+                  $ref: '#/components/examples/IdempotencyKeyReusedError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /payout-batches:
+    get:
+      operationId: listPayoutBatches
+      summary: List payout batches
+      description: Finance head or admin only. Newest first.
+      tags: [Payouts]
+      x-api-id: API-024
+      x-requirements: [FR-012]
+      x-roles: [FINANCE_HEAD, ADMIN]
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: A page of batches
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/XTraceId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatchSummaryPage'
+              example:
+                items:
+                  - batchId: 01937c2a-9c00-7000-8000-0000000000b7
+                    batchNumber: PB-2026-0007
+                    status: EXPORTED
+                    claimCount: 1
+                    totalAmount: '27450.00'
+                    createdAt: '2026-11-30T04:50:00Z'
+                    createdBy: 01937c2a-1000-7000-8000-000000000001
+                    exportedAt: '2026-11-30T05:00:00Z'
+                    exportedBy: 01937c2a-1000-7000-8000-000000000001
+                    fileName: EXPENSEFLOW_PAYOUT_PB-2026-0007_20261130.csv
+                    fileSha256: 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
+                page: 1
+                pageSize: 20
+                total: 1
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    post:
+      operationId: createPayoutBatch
+      summary: Create a payout batch from approved claims
+      description: |
+        Finance head or admin only (CL-11). All-or-nothing: every claim must be `APPROVED` and in no batch,
+        otherwise `422 CLAIM_NOT_ELIGIBLE_FOR_PAYOUT` with `details.claimIds` (B-09). Sampled claims are not
+        `APPROVED` until reviewed (CL-14). The batch is `CREATED`; claims move to `IN_PAYOUT_BATCH` (T-14).
+        Audit `PAYOUT_BATCH_CREATED` and `CLAIM_ADDED_TO_BATCH`.
+      tags: [Payouts]
+      x-api-id: API-026
+      x-requirements: [FR-012, CL-11, CL-14]
+      x-roles: [FINANCE_HEAD, ADMIN]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateBatchRequest'
+            example:
+              claimIds:
+                - 01937c2a-5b1e-7c3d-9a4f-2b6e8d1c0a11
+      responses:
+        '201':
+          description: Batch created
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/XTraceId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatchDetail'
+              examples:
+                created:
+                  $ref: '#/components/examples/BatchDetailExample'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/StateConflict'
+        '422':
+          description: '`CLAIM_NOT_ELIGIBLE_FOR_PAYOUT` (`details.claimIds`) or `IDEMPOTENCY_KEY_REUSED`'
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/XTraceId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                notEligible:
+                  summary: A claim is not approved or already in a batch
+                  value:
+                    code: CLAIM_NOT_ELIGIBLE_FOR_PAYOUT
+                    message: Only approved claims that are not in a batch can be added
+                    details:
+                      claimIds: [01937c2a-5b1e-7c3d-9a4f-2b6e8d1c0a12]
+                    traceId: 3f1c2b9e-7d4a-4c1e-9b2f-0a6d8e5c4b21
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /payout-batches/eligible-claims:
+    get:
+      operationId: listEligiblePayoutClaims
+      summary: Approved claims not yet in a batch
+      description: Finance head or admin only. `APPROVED` claims with no batch, oldest decision first (CL-14).
+      tags: [Payouts]
+      x-api-id: API-025
+      x-requirements: [FR-012, CL-14]
+      x-roles: [FINANCE_HEAD, ADMIN]
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: A page of eligible claims
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/XTraceId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PayoutClaimPage'
+              example:
+                items:
+                  - claimId: 01937c2a-5b1e-7c3d-9a4f-2b6e8d1c0a11
+                    claimNumber: CLM-2026-01534
+                    status: APPROVED
+                    total: '27450.00'
+                    claimant:
+                      userId: 01937c2a-1000-7000-8000-000000000142
+                      name: Ananya Rao
+                      employeeCode: EMP0142
+                    department: Consulting
+                    approvedAt: '2026-11-26T08:00:00Z'
+                page: 1
+                pageSize: 20
+                total: 1
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /payout-batches/{batchId}:
+    parameters:
+      - $ref: '#/components/parameters/BatchId'
+    get:
+      operationId: getPayoutBatch
+      summary: Get a payout batch with its claims
+      tags: [Payouts]
+      x-api-id: API-027
+      x-requirements: [FR-012]
+      x-roles: [FINANCE_HEAD, ADMIN]
+      responses:
+        '200':
+          description: Batch detail
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/XTraceId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatchDetail'
+              examples:
+                batch:
+                  $ref: '#/components/examples/BatchDetailExample'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /payout-batches/{batchId}/export:
+    parameters:
+      - $ref: '#/components/parameters/BatchId'
+    post:
+      operationId: exportPayoutBatch
+      summary: Export the batch as the mock bank file and mark claims Paid
+      description: |
+        Finance head or admin only. Batch must be `CREATED` and non-empty (`409` otherwise). In one
+        transaction: the CSV (CLAUDE.md 2.8) is built and stored once, the batch becomes `EXPORTED`, every
+        claim moves to `PAID` (T-15, CL-06) and audit rows are written. Returns the control summary (row
+        count, total, SHA-256 of the file). Download the file with API-029.
+      tags: [Payouts]
+      x-api-id: API-028
+      x-requirements: [FR-013, FR-014, CL-06, CL-11]
+      x-roles: [FINANCE_HEAD, ADMIN]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Exported; control summary
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/XTraceId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExportSummary'
+              example:
+                batchId: 01937c2a-9c00-7000-8000-0000000000b7
+                batchNumber: PB-2026-0007
+                fileName: EXPENSEFLOW_PAYOUT_PB-2026-0007_20261130.csv
+                rowCount: 1
+                totalAmount: '27450.00'
+                fileSha256: 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
+                exportedAt: '2026-11-30T05:00:00Z'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/StateConflict'
+        '422':
+          description: '`IDEMPOTENCY_KEY_REUSED`'
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/XTraceId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                keyReused:
+                  $ref: '#/components/examples/IdempotencyKeyReusedError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /payout-batches/{batchId}/file:
+    parameters:
+      - $ref: '#/components/parameters/BatchId'
+    get:
+      operationId: downloadPayoutFile
+      summary: Download the exported bank file (CSV)
+      description: |
+        Finance head or admin only; only after export (`409` before). Returns the exact stored bytes, so
+        every download has the same SHA-256. Format (CLAUDE.md 2.8): UTF-8, comma, CRLF rows, header row, every text
+        field quoted, 13 columns, one row per claim ordered by claim number, amounts with 2 decimals,
+        narration cut to 30 characters, values starting with `=`, `+`, `-`, `@`, tab or CR prefixed with `'`.
+      tags: [Payouts]
+      x-api-id: API-029
+      x-requirements: [FR-013, CL-11]
+      x-roles: [FINANCE_HEAD, ADMIN]
+      responses:
+        '200':
+          description: The CSV file as an attachment
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/XTraceId'
+            Content-Disposition:
+              description: Attachment named `EXPENSEFLOW_PAYOUT_<batchNumber>_<YYYYMMDD>.csv`
+              schema:
+                type: string
+              example: attachment; filename="EXPENSEFLOW_PAYOUT_PB-2026-0007_20261130.csv"
+            X-Content-Type-Options:
+              schema:
+                type: string
+                enum: [nosniff]
+          content:
+            text/csv:
+              schema:
+                type: string
+                format: binary
+              example: |
+                "batch_number","payment_reference","value_date","payment_mode","employee_id","beneficiary_name","beneficiary_account_number","beneficiary_ifsc","amount","currency","claim_id","department","narration"
+                "PB-2026-0007","PB-2026-0007-0001","2026-11-30","NEFT","EMP0142","Ananya Rao","001234567890","HDFC0001234",27450.00,"INR","CLM-2026-01534","Consulting","Expense reimbursement CLM-2026"
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/StateConflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /dashboard/spend:
+    get:
+      operationId: getSpendReport
+      summary: Spend by category, department or month
+      description: |
+        Finance auditors and finance head/admin (ASM-010). Sum of line amounts of claims in `APPROVED`,
+        `IN_PAYOUT_BATCH` or `PAID` (SPEC-Q-11). `fromDate`/`toDate` filter on the line's expense date; month
+        is the expense month (`YYYY-MM`). Items are sorted by total descending, or by month ascending.
+      tags: [Dashboard]
+      x-api-id: API-030
+      x-requirements: [FR-015, ASM-010, SPEC-Q-11]
+      x-roles: [FINANCE_AUDITOR, FINANCE_HEAD, ADMIN]
+      parameters:
+        - name: groupBy
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [category, department, month]
+            default: category
+        - $ref: '#/components/parameters/FromDate'
+        - $ref: '#/components/parameters/ToDate'
+        - $ref: '#/components/parameters/DepartmentId'
+      responses:
+        '200':
+          description: Spend report
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/XTraceId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SpendReport'
+              example:
+                groupBy: category
+                items:
+                  - key: HOTEL
+                    total: '1845200.00'
+                    lineCount: 412
+                  - key: MEALS
+                    total: '612340.50'
+                    lineCount: 980
+                grandTotal: '2457540.50'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /dashboard/policy-violations:
+    get:
+      operationId: getPolicyViolationReport
+      summary: Policy violations by rule
+      description: Finance auditors and finance head/admin. Count of stored policy results by rule ID from each claim's latest submission; `fromDate`/`toDate` filter on the line's expense date.
+      tags: [Dashboard]
+      x-api-id: API-031
+      x-requirements: [FR-016, ASM-010, SPEC-Q-11]
+      x-roles: [FINANCE_AUDITOR, FINANCE_HEAD, ADMIN]
+      parameters:
+        - $ref: '#/components/parameters/FromDate'
+        - $ref: '#/components/parameters/ToDate'
+        - $ref: '#/components/parameters/DepartmentId'
+      responses:
+        '200':
+          description: Violation report
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/XTraceId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ViolationReport'
+              example:
+                items:
+                  - ruleId: POL-001
+                    resultType: LIMIT_BREACH
+                    count: 57
+                    claimCount: 49
+                  - ruleId: POL-006
+                    resultType: DUPLICATE_FLAG
+                    count: 31
+                    claimCount: 30
+                total: 88
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /dashboard/approval-time:
+    get:
+      operationId: getApprovalTimeReport
+      summary: Average approval time
+      description: |
+        Finance auditors and finance head/admin. Average calendar hours from the latest submission to the
+        final approval (SPEC-Q-08), for all approved claims and for claims that went through the chain only
+        (`averageHoursRouted`). `fromDate`/`toDate` filter on the **submission** date (IST). Averages are
+        `null` when no claim matches.
+      tags: [Dashboard]
+      x-api-id: API-032
+      x-requirements: [FR-017, ASM-010, SPEC-Q-08]
+      x-roles: [FINANCE_AUDITOR, FINANCE_HEAD, ADMIN]
+      parameters:
+        - $ref: '#/components/parameters/FromDate'
+        - $ref: '#/components/parameters/ToDate'
+        - $ref: '#/components/parameters/DepartmentId'
+      responses:
+        '200':
+          description: Approval-time report
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/XTraceId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApprovalTimeReport'
+              example:
+                approvedClaims: 2210
+                averageHours: '18.42'
+                routedClaims: 640
+                averageHoursRouted: '52.10'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /audit-events:
+    get:
+      operationId: searchAuditEvents
+      summary: Search the full audit trail
+      description: |
+        Finance head or admin only (ASM-010). Newest first. The audit trail is append-only; there is no
+        update or delete operation (NFR-004). `fromDate`/`toDate` are IST dates on `occurredAt`. An unknown
+        `claimNumber` returns an empty page.
+      tags: [Audit]
+      x-api-id: API-033
+      x-requirements: [FR-018, NFR-004, ASM-010]
+      x-roles: [FINANCE_HEAD, ADMIN]
+      parameters:
+        - name: claimNumber
+          in: query
+          required: false
+          description: Claim number, case-insensitive.
+          schema:
+            type: string
+            example: CLM-2026-01534
+        - name: actorId
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - name: action
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/AuditAction'
+        - name: entityType
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/EntityType'
+        - name: fromDate
+          in: query
+          required: false
+          description: Events on or after this IST date.
+          schema:
+            type: string
+            format: date
+        - name: toDate
+          in: query
+          required: false
+          description: Events on or before this IST date.
+          schema:
+            type: string
+            format: date
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: A page of audit events
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/XTraceId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditEventPage'
+              examples:
+                trail:
+                  $ref: '#/components/examples/AuditEventPageExample'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /policy-rules:
+    get:
+      operationId: listPolicyRules
+      summary: Current policy configuration
+      description: Finance head or admin only (CL-10). The latest value of every configuration key.
+      tags: [Policy]
+      x-api-id: API-034
+      x-requirements: [CL-10, POL-001, POL-002, POL-003, POL-004, POL-005, POL-006, POL-007, POL-008, POL-009]
+      x-roles: [FINANCE_HEAD, ADMIN]
+      responses:
+        '200':
+          description: Rule values
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/XTraceId'
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/RuleView'
+              example:
+                - ruleKey: meals.max_per_day
+                  value: '1500.00'
+                  configVersion: 1
+                  updatedBy: null
+                  updatedAt: '2026-11-27T00:00:00Z'
+                - ruleKey: hotel.tier1_cities
+                  value: [Kolkata, Mumbai, Delhi, Chennai, Bangalore]
+                  configVersion: 1
+                  updatedBy: null
+                  updatedAt: '2026-11-27T00:00:00Z'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /policy-rules/{ruleKey}:
+    parameters:
+      - name: ruleKey
+        in: path
+        required: true
+        description: Configuration key. An unknown key is `404`.
+        schema:
+          $ref: '#/components/schemas/RuleKey'
+    put:
+      operationId: updatePolicyRule
+      summary: Change one policy configuration value
+      description: |
+        Finance head or admin only (CL-10). Inserts a new row with the next `configVersion`; claims already
+        submitted keep the version they stored (B-08). Value rules: money keys are amounts with at most
+        2 decimals (`> 0`; `receipt.mandatory_above` `>= 0`), sent as a JSON number or numeric string, and the
+        finance-head threshold must stay above the auditor threshold; `sample_audit.rate` is `> 0` and `<= 1`;
+        `duplicate.match_receipt_hash`, `weekend.flag_for_manager`, `duplicate.match_date_receipt_no` are
+        booleans; `hotel.tier1_cities` is a non-empty list of names (max 100 characters each);
+        `duplicate.match_fields` is a non-empty subset of `vendor`, `amount`, `expenseDate`. Invalid values
+        are `400` with `details.fields.value`. Audit `POLICY_RULE_CHANGED` with old and new value.
+      tags: [Policy]
+      x-api-id: API-035
+      x-requirements: [CL-10, B-08]
+      x-roles: [FINANCE_HEAD, ADMIN]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateRuleRequest'
+            examples:
+              money:
+                summary: Change the meals limit
+                value:
+                  value: '1600.00'
+              cities:
+                summary: Change the tier-1 city list
+                value:
+                  value: [Kolkata, Mumbai, Delhi, Chennai, Bangalore, Hyderabad]
+      responses:
+        '200':
+          description: New value stored
+          headers:
+            X-Trace-Id:
+              $ref: '#/components/headers/XTraceId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RuleView'
+              example:
+                ruleKey: meals.max_per_day
+                value: '1600.00'
+                configVersion: 2
+                updatedBy: 01937c2a-1000-7000-8000-000000000001
+                updatedAt: '2026-11-27T10:00:00Z'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
 
 components:
   securitySchemes:
@@ -167,99 +1992,1579 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
+      description: HS256 JWT from API-002 (`sub` = user ID, `role`, `exp`). Lifetime 480 minutes by default (SPEC-Q-13).
+
+  headers:
+    XTraceId:
+      description: Request trace ID; also in logs, audit rows and error bodies.
+      schema:
+        type: string
+        pattern: '^[A-Za-z0-9-]{8,64}$'
+      example: 3f1c2b9e-7d4a-4c1e-9b2f-0a6d8e5c4b21
 
   parameters:
+    ClaimId:
+      name: claimId
+      in: path
+      required: true
+      description: Claim ID
+      schema:
+        type: string
+        format: uuid
+    LineItemId:
+      name: lineItemId
+      in: path
+      required: true
+      description: Line item ID (must belong to the claim)
+      schema:
+        type: string
+        format: uuid
+    BatchId:
+      name: batchId
+      in: path
+      required: true
+      description: Payout batch ID
+      schema:
+        type: string
+        format: uuid
     Page:
       name: page
       in: query
-      schema: { type: integer, minimum: 1, default: 1 }
+      required: false
+      description: 1-based page number.
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
     PageSize:
       name: pageSize
       in: query
-      schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
-    ItemId:
-      name: itemId
-      in: path
-      required: true
-      schema: { type: string, format: uuid }
+      required: false
+      description: Items per page.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: |
+        Optional client-generated key (1-100 characters). Same key and same request replays the stored
+        response; same key and a different request is `422 IDEMPOTENCY_KEY_REUSED`; a duplicate while the
+        first is running is `409`. Kept 24 hours, per user and operation.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 100
+      example: 6a1f0c3e-2b7d-4e8a-9c5f-1d2e3f4a5b6c
+    FromDate:
+      name: fromDate
+      in: query
+      required: false
+      description: Expense date on or after (inclusive).
+      schema:
+        type: string
+        format: date
+    ToDate:
+      name: toDate
+      in: query
+      required: false
+      description: Expense date on or before (inclusive).
+      schema:
+        type: string
+        format: date
+    DepartmentId:
+      name: departmentId
+      in: query
+      required: false
+      description: Only claimants in this department.
+      schema:
+        type: string
+        format: uuid
+
+  responses:
+    ValidationFailed:
+      description: '`VALIDATION_FAILED` - malformed body, unknown JSON field, wrong parameter type, bad paging or a field rule (`details.fields`)'
+      headers:
+        X-Trace-Id:
+          $ref: '#/components/headers/XTraceId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            code: VALIDATION_FAILED
+            message: One or more fields are invalid
+            details:
+              fields:
+                amount: must be greater than 0
+            traceId: 3f1c2b9e-7d4a-4c1e-9b2f-0a6d8e5c4b21
+    Unauthenticated:
+      description: '`UNAUTHENTICATED` - missing, invalid or expired access token'
+      headers:
+        X-Trace-Id:
+          $ref: '#/components/headers/XTraceId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            code: UNAUTHENTICATED
+            message: 'Sign in to continue: the access token is missing, invalid or expired'
+            details: null
+            traceId: 3f1c2b9e-7d4a-4c1e-9b2f-0a6d8e5c4b21
+    Forbidden:
+      description: '`FORBIDDEN` - the caller''s role or capability does not allow this operation'
+      headers:
+        X-Trace-Id:
+          $ref: '#/components/headers/XTraceId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            code: FORBIDDEN
+            message: Only the finance head or an admin can manage payouts
+            details: null
+            traceId: 3f1c2b9e-7d4a-4c1e-9b2f-0a6d8e5c4b21
+    NotClaimant:
+      description: '`FORBIDDEN` - the claim is visible to the caller (e.g. an approver) but only the claimant may change or submit it'
+      headers:
+        X-Trace-Id:
+          $ref: '#/components/headers/XTraceId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            code: FORBIDDEN
+            message: Only the claimant can change this claim
+            details: null
+            traceId: 3f1c2b9e-7d4a-4c1e-9b2f-0a6d8e5c4b21
+    NotCurrentApprover:
+      description: '`NOT_CURRENT_APPROVER` - the claim is visible but the caller cannot act on its current step'
+      headers:
+        X-Trace-Id:
+          $ref: '#/components/headers/XTraceId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            code: NOT_CURRENT_APPROVER
+            message: You are not the approver of the current step
+            details: null
+            traceId: 3f1c2b9e-7d4a-4c1e-9b2f-0a6d8e5c4b21
+    NotFound:
+      description: '`NOT_FOUND` - does not exist or is not visible to the caller (CL-15, B-10)'
+      headers:
+        X-Trace-Id:
+          $ref: '#/components/headers/XTraceId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            code: NOT_FOUND
+            message: Claim not found
+            details: null
+            traceId: 3f1c2b9e-7d4a-4c1e-9b2f-0a6d8e5c4b21
+    StateConflict:
+      description: '`STATE_CONFLICT` - not allowed from the current state, or the same idempotent request is still running'
+      headers:
+        X-Trace-Id:
+          $ref: '#/components/headers/XTraceId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            code: STATE_CONFLICT
+            message: The claim is APPROVED and cannot take this action
+            details: null
+            traceId: 3f1c2b9e-7d4a-4c1e-9b2f-0a6d8e5c4b21
+    FileTooLarge:
+      description: '`FILE_TOO_LARGE` - the receipt is above 5 MB'
+      headers:
+        X-Trace-Id:
+          $ref: '#/components/headers/XTraceId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            code: FILE_TOO_LARGE
+            message: The uploaded file is too large
+            details: null
+            traceId: 3f1c2b9e-7d4a-4c1e-9b2f-0a6d8e5c4b21
+    UnsupportedFileType:
+      description: '`UNSUPPORTED_FILE_TYPE` - the file content is not PDF, JPEG or PNG, or the request is not multipart'
+      headers:
+        X-Trace-Id:
+          $ref: '#/components/headers/XTraceId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            code: UNSUPPORTED_FILE_TYPE
+            message: Receipts must be PDF, JPEG or PNG files
+            details: null
+            traceId: 3f1c2b9e-7d4a-4c1e-9b2f-0a6d8e5c4b21
+    RateLimited:
+      description: '`RATE_LIMITED` - too many requests in the current one-minute window'
+      headers:
+        X-Trace-Id:
+          $ref: '#/components/headers/XTraceId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            code: RATE_LIMITED
+            message: Too many requests. Wait a minute and try again.
+            details: null
+            traceId: 3f1c2b9e-7d4a-4c1e-9b2f-0a6d8e5c4b21
+    InternalError:
+      description: '`INTERNAL_ERROR` - unexpected failure; no stack trace is returned'
+      headers:
+        X-Trace-Id:
+          $ref: '#/components/headers/XTraceId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            code: INTERNAL_ERROR
+            message: Something went wrong. Quote the trace ID if you report it.
+            details: null
+            traceId: 3f1c2b9e-7d4a-4c1e-9b2f-0a6d8e5c4b21
+
+  examples:
+    MeExample:
+      summary: An employee who is also a line manager
+      value:
+        userId: 01937c2a-1000-7000-8000-000000000017
+        employeeCode: EMP0017
+        name: Rahul Mehta
+        email: rahul.mehta@expenseflow.example
+        role: EMPLOYEE
+        departmentId: 01937c2a-0000-7000-8000-000000000001
+        departmentName: Consulting
+        managerId: 01937c2a-1000-7000-8000-000000000005
+        isManager: true
+        isApprover: true
+        canDelegate: true
+        isAdmin: false
+    HotelLineRequestExample:
+      summary: Hotel line (tier-1 city, 2 nights)
+      value:
+        category: HOTEL
+        amount: '11000.00'
+        expenseDate: '2026-11-20'
+        vendor: Taj Lands End
+        receiptNumber: TLE-55102
+        city: Mumbai
+        checkInDate: '2026-11-20'
+        checkOutDate: '2026-11-22'
+    HotelLineViewExample:
+      summary: Hotel line before submission
+      value:
+        lineItemId: 01937c2a-6c00-7000-8000-000000000101
+        lineNo: 1
+        category: HOTEL
+        amount: '11000.00'
+        expenseDate: '2026-11-20'
+        vendor: Taj Lands End
+        receiptNumber: TLE-55102
+        city: Mumbai
+        checkInDate: '2026-11-20'
+        checkOutDate: '2026-11-22'
+        nights: 2
+        receipt: null
+        policyResults: []
+    ClaimDetailDraftExample:
+      summary: New empty draft
+      value:
+        claimId: 01937c2a-5b1e-7c3d-9a4f-2b6e8d1c0a11
+        claimNumber: CLM-2026-01534
+        status: DRAFT
+        total: '0.00'
+        claimant:
+          userId: 01937c2a-1000-7000-8000-000000000142
+          name: Ananya Rao
+          employeeCode: EMP0142
+        department: Consulting
+        createdAt: '2026-11-25T04:10:00Z'
+        updatedAt: '2026-11-25T04:10:00Z'
+        submittedAt: null
+        decidedAt: null
+        submissionNo: 0
+        configVersion: null
+        decisionReason: null
+        latestSendBackComment: null
+        lineItems: []
+        steps: []
+        comments: []
+        allowedActions: [EDIT, SUBMIT]
+    ClaimDetailPendingExample:
+      summary: Claim routed to the manager because of a weekend line
+      value:
+        claimId: 01937c2a-5b1e-7c3d-9a4f-2b6e8d1c0a11
+        claimNumber: CLM-2026-01534
+        status: PENDING_MANAGER
+        total: '27450.00'
+        claimant:
+          userId: 01937c2a-1000-7000-8000-000000000142
+          name: Ananya Rao
+          employeeCode: EMP0142
+        department: Consulting
+        createdAt: '2026-11-25T04:10:00Z'
+        updatedAt: '2026-11-25T05:00:00Z'
+        submittedAt: '2026-11-25T05:00:00Z'
+        decidedAt: null
+        submissionNo: 1
+        configVersion: 1
+        decisionReason: null
+        latestSendBackComment: null
+        lineItems:
+          - lineItemId: 01937c2a-6c00-7000-8000-000000000102
+            lineNo: 1
+            category: LOCAL_CAB
+            amount: '850.00'
+            expenseDate: '2026-11-22'
+            vendor: Meru Cabs
+            receiptNumber: MC-77812
+            city: null
+            checkInDate: null
+            checkOutDate: null
+            nights: null
+            receipt:
+              receiptId: 01937c2a-7a00-7000-8000-0000000000a1
+              contentType: image/jpeg
+              sizeBytes: 98211
+              uploadedAt: '2026-11-25T04:20:00Z'
+            policyResults:
+              - ruleId: POL-008
+                resultType: WEEKEND_FLAG
+                configKey: weekend.flag_for_manager
+                configuredLimit: null
+                actualValue: '2026-11-22'
+                reason: Weekend spend on SUNDAY 2026-11-22
+                details: null
+        steps:
+          - stepId: 01937c2a-8a00-7000-8000-0000000000d1
+            submissionNo: 1
+            level: 1
+            stepType: MANAGER
+            status: PENDING
+            assignedApprover:
+              userId: 01937c2a-1000-7000-8000-000000000017
+              name: Rahul Mehta
+              employeeCode: EMP0017
+            skipReason: null
+            actedBy: null
+            onBehalfOf: null
+            activatedAt: '2026-11-25T05:00:00Z'
+            actedAt: null
+          - stepId: 01937c2a-8a00-7000-8000-0000000000d2
+            submissionNo: 1
+            level: 2
+            stepType: FINANCE_AUDITOR
+            status: WAITING
+            assignedApprover: null
+            skipReason: null
+            actedBy: null
+            onBehalfOf: null
+            activatedAt: null
+            actedAt: null
+        comments: []
+        allowedActions: [APPROVE, REJECT, SEND_BACK, COMMENT]
+    AuditEventPageExample:
+      summary: One audit event
+      value:
+        items:
+          - eventId: 10452
+            occurredAt: '2026-11-25T05:00:00Z'
+            action: CLAIM_ROUTED
+            actor: null
+            onBehalfOf: null
+            entityType: CLAIM
+            entityId: 01937c2a-5b1e-7c3d-9a4f-2b6e8d1c0a11
+            claimId: 01937c2a-5b1e-7c3d-9a4f-2b6e8d1c0a11
+            claimNumber: CLM-2026-01534
+            fromState: SUBMITTED
+            toState: PENDING_MANAGER
+            comment: Claim has a weekend line; routed to the approval chain
+            details:
+              steps: ['MANAGER:PENDING', 'FINANCE_AUDITOR:WAITING']
+        page: 1
+        pageSize: 20
+        total: 1
+    DelegationViewExample:
+      summary: Active delegation given by a manager
+      value:
+        delegationId: 01937c2a-9a00-7000-8000-0000000000e1
+        direction: GIVEN
+        delegator:
+          userId: 01937c2a-1000-7000-8000-000000000017
+          name: Rahul Mehta
+          employeeCode: EMP0017
+        delegate:
+          userId: 01937c2a-1000-7000-8000-000000000003
+          name: Kavya Iyer
+          employeeCode: EMP0003
+        startDate: '2026-12-01'
+        endDate: '2026-12-10'
+        cancelledAt: null
+        active: false
+        createdAt: '2026-11-27T09:00:00Z'
+    BatchDetailExample:
+      summary: Newly created batch
+      value:
+        batch:
+          batchId: 01937c2a-9c00-7000-8000-0000000000b7
+          batchNumber: PB-2026-0007
+          status: CREATED
+          claimCount: 1
+          totalAmount: '27450.00'
+          createdAt: '2026-11-30T04:50:00Z'
+          createdBy: 01937c2a-1000-7000-8000-000000000001
+          exportedAt: null
+          exportedBy: null
+          fileName: null
+          fileSha256: null
+        claims:
+          - claimId: 01937c2a-5b1e-7c3d-9a4f-2b6e8d1c0a11
+            claimNumber: CLM-2026-01534
+            status: IN_PAYOUT_BATCH
+            total: '27450.00'
+            claimant:
+              userId: 01937c2a-1000-7000-8000-000000000142
+              name: Ananya Rao
+              employeeCode: EMP0142
+            department: Consulting
+            approvedAt: '2026-11-26T08:00:00Z'
+    SelfApprovalError:
+      summary: The claimant tried to act on their own claim
+      value:
+        code: SELF_APPROVAL_FORBIDDEN
+        message: You cannot act on your own claim
+        details: null
+        traceId: 3f1c2b9e-7d4a-4c1e-9b2f-0a6d8e5c4b21
+    CommentRequiredError:
+      summary: Missing or blank comment
+      value:
+        code: COMMENT_REQUIRED
+        message: Add a comment explaining why the claim is rejected
+        details: null
+        traceId: 3f1c2b9e-7d4a-4c1e-9b2f-0a6d8e5c4b21
+    IdempotencyKeyReusedError:
+      summary: Same key, different request
+      value:
+        code: IDEMPOTENCY_KEY_REUSED
+        message: This Idempotency-Key was already used for a different request
+        details: null
+        traceId: 3f1c2b9e-7d4a-4c1e-9b2f-0a6d8e5c4b21
 
   schemas:
+    Money:
+      type: string
+      description: INR amount, exactly two decimals, no separators.
+      pattern: '^\d+\.\d{2}$'
+      example: '27450.00'
+    MoneyInput:
+      type: string
+      description: INR amount with at most 10 integer digits and 2 decimals.
+      pattern: '^\d{1,10}(\.\d{1,2})?$'
+      example: '1200.00'
+    ErrorResponse:
+      type: object
+      description: The single error body of the API (CLAUDE.md 11.4).
+      required: [code, message, details, traceId]
+      properties:
+        code:
+          $ref: '#/components/schemas/ErrorCode'
+        message:
+          type: string
+          description: Human-readable message that says what to fix.
+        details:
+          type: object
+          nullable: true
+          additionalProperties: true
+          description: 'Optional structured data, e.g. `fields` (field -> message), `lines` (per-line receipt errors) or `claimIds`.'
+        traceId:
+          type: string
+          example: 3f1c2b9e-7d4a-4c1e-9b2f-0a6d8e5c4b21
+    ErrorCode:
+      type: string
+      enum:
+        - VALIDATION_FAILED
+        - UNAUTHENTICATED
+        - FORBIDDEN
+        - NOT_CURRENT_APPROVER
+        - NOT_FOUND
+        - METHOD_NOT_ALLOWED
+        - STATE_CONFLICT
+        - FILE_TOO_LARGE
+        - UNSUPPORTED_FILE_TYPE
+        - RECEIPT_REQUIRED
+        - CLAIM_HAS_NO_LINES
+        - COMMENT_REQUIRED
+        - SELF_APPROVAL_FORBIDDEN
+        - INVALID_DELEGATE
+        - DELEGATION_OVERLAP
+        - CLAIM_NOT_ELIGIBLE_FOR_PAYOUT
+        - IDEMPOTENCY_KEY_REUSED
+        - BUSINESS_RULE_VIOLATION
+        - RATE_LIMITED
+        - INTERNAL_ERROR
+    ClaimStatus:
+      type: string
+      description: Claim state (architecture/SPEC.md 3.1). `SUBMITTED` and `AUTO_APPROVED` are transient and appear only in the audit trail.
+      enum: [DRAFT, SUBMITTED, AUTO_APPROVED, AUTO_REJECTED, PENDING_MANAGER, PENDING_AUDITOR, PENDING_FINANCE_HEAD, SENT_BACK, REJECTED, SAMPLE_AUDIT_PENDING, APPROVED, IN_PAYOUT_BATCH, PAID]
+    ExpenseCategory:
+      type: string
+      enum: [MEALS, HOTEL, LOCAL_CAB]
+    UserRole:
+      type: string
+      enum: [EMPLOYEE, FINANCE_AUDITOR, FINANCE_HEAD, ADMIN]
+    StepType:
+      type: string
+      enum: [MANAGER, FINANCE_AUDITOR, FINANCE_HEAD]
+    StepStatus:
+      type: string
+      enum: [WAITING, PENDING, APPROVED, REJECTED, SENT_BACK, SKIPPED, SUPERSEDED]
+    PolicyResultType:
+      type: string
+      description: Stored policy result types. `VALIDATION` (POL-005) blocks submit and is never stored.
+      enum: [LIMIT_BREACH, DUPLICATE_FLAG, WEEKEND_FLAG]
+    AuditAction:
+      type: string
+      enum: [CLAIM_CREATED, LINE_ADDED, LINE_UPDATED, LINE_DELETED, RECEIPT_UPLOADED, CLAIM_SUBMITTED, POLICY_EVALUATED, CLAIM_AUTO_REJECTED, CLAIM_ROUTED, CLAIM_AUTO_APPROVED, SAMPLE_AUDIT_SELECTED, SAMPLE_AUDIT_NOT_SELECTED, STEP_ACTIVATED, STEP_SKIPPED, STEP_APPROVED, CLAIM_APPROVED, CLAIM_REJECTED, CLAIM_SENT_BACK, COMMENT_ADDED, DELEGATION_CREATED, DELEGATION_CANCELLED, PAYOUT_BATCH_CREATED, CLAIM_ADDED_TO_BATCH, PAYOUT_BATCH_EXPORTED, CLAIM_PAID, POLICY_RULE_CHANGED, LOGIN_SUCCEEDED, LOGIN_FAILED]
+    EntityType:
+      type: string
+      enum: [CLAIM, LINE_ITEM, DELEGATION, PAYOUT_BATCH, POLICY_RULE, USER]
+    AllowedAction:
+      type: string
+      enum: [EDIT, SUBMIT, APPROVE, REJECT, SEND_BACK, COMMENT]
+    PayoutBatchStatus:
+      type: string
+      enum: [CREATED, EXPORTED]
+    RuleKey:
+      type: string
+      enum:
+        - meals.max_per_day
+        - hotel.max_per_night.tier1
+        - hotel.tier1_cities
+        - hotel.max_per_night.other
+        - local_cab.max_per_trip
+        - receipt.mandatory_above
+        - duplicate.match_fields
+        - duplicate.match_receipt_hash
+        - weekend.flag_for_manager
+        - duplicate.match_date_receipt_no
+        - approval.auditor_threshold
+        - approval.finance_head_threshold
+        - sample_audit.rate
+
+    PageMeta:
+      type: object
+      required: [page, pageSize, total]
+      properties:
+        page:
+          type: integer
+          minimum: 1
+        pageSize:
+          type: integer
+          minimum: 1
+          maximum: 100
+        total:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Total number of items across all pages.
+
+    HealthResponse:
+      type: object
+      required: [status, database, timestamp]
+      properties:
+        status:
+          type: string
+          enum: [UP]
+        database:
+          type: string
+          enum: [UP, DOWN]
+        timestamp:
+          type: string
+          format: date-time
+
     LoginRequest:
       type: object
+      additionalProperties: false
       required: [email, password]
       properties:
-        email: { type: string, format: email, example: demo@example.com }
-        password: { type: string, format: password, example: Demo@123 }
+        email:
+          type: string
+          format: email
+          maxLength: 255
+        password:
+          type: string
+          minLength: 1
+          maxLength: 200
+          format: password
     LoginResponse:
       type: object
+      required: [accessToken, tokenType, expiresAt, user]
       properties:
-        accessToken: { type: string }
-        expiresIn: { type: integer, example: 3600 }
-        user: { $ref: "#/components/schemas/User" }
-    User:
+        accessToken:
+          type: string
+          description: JWT to send as `Authorization Bearer`.
+        tokenType:
+          type: string
+          enum: [Bearer]
+        expiresAt:
+          type: string
+          format: date-time
+        user:
+          $ref: '#/components/schemas/Me'
+    Me:
       type: object
+      required: [userId, employeeCode, name, email, role, departmentId, departmentName, managerId, isManager, isApprover, canDelegate, isAdmin]
       properties:
-        id: { type: string, format: uuid }
-        email: { type: string, format: email }
-        fullName: { type: string }
-        role: { type: string, enum: [user, admin] }
-    Item:
+        userId:
+          type: string
+          format: uuid
+        employeeCode:
+          type: string
+          example: EMP0142
+        name:
+          type: string
+        email:
+          type: string
+          format: email
+        role:
+          $ref: '#/components/schemas/UserRole'
+        departmentId:
+          type: string
+          format: uuid
+        departmentName:
+          type: string
+          nullable: true
+        managerId:
+          type: string
+          format: uuid
+          nullable: true
+        isManager:
+          type: boolean
+          description: At least one user reports to this user.
+        isApprover:
+          type: boolean
+          description: Manager, finance auditor, finance head, or an active delegate.
+        canDelegate:
+          type: boolean
+          description: Same as isManager.
+        isAdmin:
+          type: boolean
+          description: Role FINANCE_HEAD or ADMIN.
+    Department:
       type: object
+      required: [departmentId, name]
       properties:
-        id: { type: string, format: uuid }
-        name: { type: string, example: Sample item }
-        description: { type: string }
-        status: { type: string, enum: [active, archived] }
-        createdAt: { type: string, format: date-time }
-        updatedAt: { type: string, format: date-time }
-    ItemCreate:
+        departmentId:
+          type: string
+          format: uuid
+        name:
+          type: string
+    ClientConfig:
       type: object
-      required: [name]
+      required: [receiptMandatoryAbove, tier1Cities, categories, allowedReceiptTypes, maxReceiptBytes, configVersion]
       properties:
-        name: { type: string, minLength: 1, maxLength: 150 }
-        description: { type: string, maxLength: 2000 }
-    ItemUpdate:
+        receiptMandatoryAbove:
+          $ref: '#/components/schemas/Money'
+        tier1Cities:
+          type: array
+          items:
+            type: string
+        categories:
+          type: array
+          items:
+            $ref: '#/components/schemas/ExpenseCategory'
+        allowedReceiptTypes:
+          type: array
+          items:
+            type: string
+            enum: [application/pdf, image/jpeg, image/png]
+        maxReceiptBytes:
+          type: integer
+          example: 5242880
+        configVersion:
+          type: integer
+
+    PersonRef:
       type: object
+      required: [userId, name, employeeCode]
       properties:
-        name: { type: string, minLength: 1, maxLength: 150 }
-        description: { type: string, maxLength: 2000 }
-        status: { type: string, enum: [active, archived] }
-    ItemPage:
+        userId:
+          type: string
+          format: uuid
+        name:
+          type: string
+        employeeCode:
+          type: string
+          example: EMP0142
+    NullablePersonRef:
       type: object
+      nullable: true
+      description: PersonRef, or null when not applicable.
+      required: [userId, name, employeeCode]
+      properties:
+        userId:
+          type: string
+          format: uuid
+        name:
+          type: string
+        employeeCode:
+          type: string
+          example: EMP0142
+
+    LineItemRequest:
+      type: object
+      additionalProperties: false
+      description: |
+        Line-item fields (architecture/SPEC.md 4.4, CL-05, CL-08). Hotel lines require `city`, `checkInDate`
+        and `checkOutDate` (after check-in) and `expenseDate` equal to `checkInDate`; other categories must
+        omit those three fields. `expenseDate` must not be in the future (IST).
+      required: [category, amount, expenseDate, vendor, receiptNumber]
+      properties:
+        category:
+          $ref: '#/components/schemas/ExpenseCategory'
+        amount:
+          allOf:
+            - $ref: '#/components/schemas/MoneyInput'
+          description: Greater than 0, at most 2 decimals.
+        expenseDate:
+          type: string
+          format: date
+        vendor:
+          type: string
+          minLength: 1
+          maxLength: 120
+        receiptNumber:
+          type: string
+          minLength: 1
+          maxLength: 60
+          description: Required on every line; date + receipt number must be unique (POL-009).
+        city:
+          type: string
+          maxLength: 100
+          nullable: true
+          description: Hotel lines only.
+        checkInDate:
+          type: string
+          format: date
+          nullable: true
+          description: Hotel lines only.
+        checkOutDate:
+          type: string
+          format: date
+          nullable: true
+          description: Hotel lines only.
+    ReceiptUpload:
+      type: object
+      required: [file]
+      properties:
+        file:
+          type: string
+          format: binary
+          description: PDF, JPEG or PNG (checked by content), at most 5 MB.
+    ReceiptView:
+      type: object
+      description: Receipt metadata; the SHA-256 is never returned.
+      required: [receiptId, contentType, sizeBytes, uploadedAt]
+      properties:
+        receiptId:
+          type: string
+          format: uuid
+        contentType:
+          type: string
+          enum: [application/pdf, image/jpeg, image/png]
+        sizeBytes:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 5242880
+        uploadedAt:
+          type: string
+          format: date-time
+          nullable: true
+    NullableReceiptView:
+      type: object
+      nullable: true
+      description: ReceiptView, or null when the line has no receipt.
+      required: [receiptId, contentType, sizeBytes, uploadedAt]
+      properties:
+        receiptId:
+          type: string
+          format: uuid
+        contentType:
+          type: string
+          enum: [application/pdf, image/jpeg, image/png]
+        sizeBytes:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 5242880
+        uploadedAt:
+          type: string
+          format: date-time
+          nullable: true
+    PolicyResultView:
+      type: object
+      description: One fired rule on one line, from the claim's latest submission.
+      required: [ruleId, resultType, configKey, configuredLimit, actualValue, reason, details]
+      properties:
+        ruleId:
+          type: string
+          pattern: '^POL-\d{3}$'
+          example: POL-001
+        resultType:
+          $ref: '#/components/schemas/PolicyResultType'
+        configKey:
+          type: string
+          nullable: true
+        configuredLimit:
+          type: string
+          nullable: true
+          pattern: '^\d+\.\d{2}$'
+          description: Money; set for LIMIT_BREACH (hotel - per-night limit x nights), otherwise null.
+        actualValue:
+          type: string
+          nullable: true
+        reason:
+          type: string
+        details:
+          type: object
+          nullable: true
+          additionalProperties: true
+    LineItemView:
+      type: object
+      required: [lineItemId, lineNo, category, amount, expenseDate, vendor, receiptNumber, city, checkInDate, checkOutDate, nights, receipt, policyResults]
+      properties:
+        lineItemId:
+          type: string
+          format: uuid
+        lineNo:
+          type: integer
+          minimum: 1
+        category:
+          $ref: '#/components/schemas/ExpenseCategory'
+        amount:
+          $ref: '#/components/schemas/Money'
+        expenseDate:
+          type: string
+          format: date
+        vendor:
+          type: string
+        receiptNumber:
+          type: string
+        city:
+          type: string
+          nullable: true
+        checkInDate:
+          type: string
+          format: date
+          nullable: true
+        checkOutDate:
+          type: string
+          format: date
+          nullable: true
+        nights:
+          type: integer
+          nullable: true
+          description: checkOutDate - checkInDate, hotel lines only (ASM-005).
+        receipt:
+          $ref: '#/components/schemas/NullableReceiptView'
+        policyResults:
+          type: array
+          items:
+            $ref: '#/components/schemas/PolicyResultView'
+    StepView:
+      type: object
+      required: [stepId, submissionNo, level, stepType, status, assignedApprover, skipReason, actedBy, onBehalfOf, activatedAt, actedAt]
+      properties:
+        stepId:
+          type: string
+          format: uuid
+        submissionNo:
+          type: integer
+          minimum: 1
+        level:
+          type: integer
+          description: Order of the step in the chain.
+        stepType:
+          $ref: '#/components/schemas/StepType'
+        status:
+          $ref: '#/components/schemas/StepStatus'
+        assignedApprover:
+          allOf:
+            - $ref: '#/components/schemas/NullablePersonRef'
+          description: Manager steps only; pool steps (auditor, finance head) are null.
+        skipReason:
+          type: string
+          nullable: true
+          enum: [NO_APPROVER, CLAIMANT_IS_APPROVER, null]
+          description: Set when status is SKIPPED (CL-09, ASM-009).
+        actedBy:
+          $ref: '#/components/schemas/NullablePersonRef'
+        onBehalfOf:
+          allOf:
+            - $ref: '#/components/schemas/NullablePersonRef'
+          description: The delegator when a delegate acted.
+        activatedAt:
+          type: string
+          format: date-time
+          nullable: true
+        actedAt:
+          type: string
+          format: date-time
+          nullable: true
+    CommentView:
+      type: object
+      required: [commentId, author, body, createdAt]
+      properties:
+        commentId:
+          type: string
+          format: uuid
+        author:
+          $ref: '#/components/schemas/NullablePersonRef'
+        body:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+          nullable: true
+    ClaimSummary:
+      type: object
+      required: [claimId, claimNumber, status, total, createdAt, submittedAt, decidedAt, lineCount]
+      properties:
+        claimId:
+          type: string
+          format: uuid
+        claimNumber:
+          type: string
+          pattern: '^CLM-\d{4}-\d{5}$'
+          example: CLM-2026-01534
+        status:
+          $ref: '#/components/schemas/ClaimStatus'
+        total:
+          $ref: '#/components/schemas/Money'
+        createdAt:
+          type: string
+          format: date-time
+        submittedAt:
+          type: string
+          format: date-time
+          nullable: true
+        decidedAt:
+          type: string
+          format: date-time
+          nullable: true
+        lineCount:
+          type: integer
+          minimum: 0
+    ClaimDetail:
+      type: object
+      required: [claimId, claimNumber, status, total, claimant, department, createdAt, updatedAt, submittedAt, decidedAt, submissionNo, configVersion, decisionReason, latestSendBackComment, lineItems, steps, comments, allowedActions]
+      properties:
+        claimId:
+          type: string
+          format: uuid
+        claimNumber:
+          type: string
+          pattern: '^CLM-\d{4}-\d{5}$'
+        status:
+          $ref: '#/components/schemas/ClaimStatus'
+        total:
+          $ref: '#/components/schemas/Money'
+        claimant:
+          $ref: '#/components/schemas/NullablePersonRef'
+        department:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        submittedAt:
+          type: string
+          format: date-time
+          nullable: true
+        decidedAt:
+          type: string
+          format: date-time
+          nullable: true
+        submissionNo:
+          type: integer
+          minimum: 0
+          description: 0 until first submitted; +1 per resubmission (CL-12).
+        configVersion:
+          type: integer
+          nullable: true
+          description: Policy config version stored at submit (B-08).
+        decisionReason:
+          type: string
+          nullable: true
+          description: Auto-reject reasons or the rejection comment of the latest submission.
+        latestSendBackComment:
+          type: string
+          nullable: true
+        lineItems:
+          type: array
+          items:
+            $ref: '#/components/schemas/LineItemView'
+        steps:
+          type: array
+          description: Steps of every submission, including SUPERSEDED ones.
+          items:
+            $ref: '#/components/schemas/StepView'
+        comments:
+          type: array
+          items:
+            $ref: '#/components/schemas/CommentView'
+        allowedActions:
+          type: array
+          description: Actions the caller may take now; the backend still checks each one.
+          items:
+            $ref: '#/components/schemas/AllowedAction'
+    ClaimSummaryPage:
+      allOf:
+        - $ref: '#/components/schemas/PageMeta'
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/ClaimSummary'
+
+    AuditEventView:
+      type: object
+      required: [eventId, occurredAt, action, actor, onBehalfOf, entityType, entityId, claimId, claimNumber, fromState, toState, comment, details]
+      properties:
+        eventId:
+          type: integer
+          format: int64
+        occurredAt:
+          type: string
+          format: date-time
+        action:
+          $ref: '#/components/schemas/AuditAction'
+        actor:
+          allOf:
+            - $ref: '#/components/schemas/NullablePersonRef'
+          description: Null for system actions and failed logins.
+        onBehalfOf:
+          $ref: '#/components/schemas/NullablePersonRef'
+        entityType:
+          $ref: '#/components/schemas/EntityType'
+        entityId:
+          type: string
+          format: uuid
+          nullable: true
+        claimId:
+          type: string
+          format: uuid
+          nullable: true
+        claimNumber:
+          type: string
+          nullable: true
+        fromState:
+          type: string
+          nullable: true
+          description: A ClaimStatus value, or null.
+          example: SUBMITTED
+        toState:
+          type: string
+          nullable: true
+          description: A ClaimStatus value, or null.
+          example: PENDING_MANAGER
+        comment:
+          type: string
+          nullable: true
+        details:
+          description: Free-form JSON recorded with the event (e.g. evaluation summary, sample draw, old/new config value).
+    AuditEventPage:
+      allOf:
+        - $ref: '#/components/schemas/PageMeta'
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/AuditEventView'
+
+    ApproveRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        comment:
+          type: string
+          maxLength: 2000
+          nullable: true
+          description: Optional comment.
+    DecisionRequest:
+      type: object
+      additionalProperties: false
+      description: The body is optional for the parser, but a non-blank comment is mandatory (`422 COMMENT_REQUIRED`).
+      properties:
+        comment:
+          type: string
+          maxLength: 2000
+          nullable: true
+    CommentRequest:
+      type: object
+      additionalProperties: false
+      required: [body]
+      properties:
+        body:
+          type: string
+          minLength: 1
+          maxLength: 2000
+          description: Must not be blank.
+    ApprovalItem:
+      type: object
+      required: [claimId, claimNumber, status, total, claimant, department, stepType, submittedAt, pendingSince, onBehalfOf, flags]
+      properties:
+        claimId:
+          type: string
+          format: uuid
+        claimNumber:
+          type: string
+        status:
+          $ref: '#/components/schemas/ClaimStatus'
+        total:
+          $ref: '#/components/schemas/Money'
+        claimant:
+          $ref: '#/components/schemas/NullablePersonRef'
+        department:
+          type: string
+          nullable: true
+        stepType:
+          type: string
+          enum: [MANAGER, FINANCE_HEAD]
+        submittedAt:
+          type: string
+          format: date-time
+          nullable: true
+        pendingSince:
+          type: string
+          format: date-time
+          nullable: true
+        onBehalfOf:
+          allOf:
+            - $ref: '#/components/schemas/NullablePersonRef'
+          description: The delegator, when the caller sees this as a delegate.
+        flags:
+          type: array
+          items:
+            type: string
+            enum: [DUPLICATE, WEEKEND]
+    ApprovalItemPage:
+      allOf:
+        - $ref: '#/components/schemas/PageMeta'
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/ApprovalItem'
+
+    CreateDelegationRequest:
+      type: object
+      additionalProperties: false
+      required: [delegateId, startDate, endDate]
+      properties:
+        delegateId:
+          type: string
+          format: uuid
+        startDate:
+          type: string
+          format: date
+          description: First day of leave (inclusive, IST).
+        endDate:
+          type: string
+          format: date
+          description: Last day of leave (inclusive, IST); not before startDate.
+    DelegationView:
+      type: object
+      required: [delegationId, direction, delegator, delegate, startDate, endDate, cancelledAt, active, createdAt]
+      properties:
+        delegationId:
+          type: string
+          format: uuid
+        direction:
+          type: string
+          enum: [GIVEN, RECEIVED]
+        delegator:
+          $ref: '#/components/schemas/NullablePersonRef'
+        delegate:
+          $ref: '#/components/schemas/NullablePersonRef'
+        startDate:
+          type: string
+          format: date
+        endDate:
+          type: string
+          format: date
+        cancelledAt:
+          type: string
+          format: date-time
+          nullable: true
+        active:
+          type: boolean
+          description: Not cancelled and today (IST) is within the dates.
+        createdAt:
+          type: string
+          format: date-time
+          nullable: true
+    DelegationPage:
+      allOf:
+        - $ref: '#/components/schemas/PageMeta'
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/DelegationView'
+
+    QueueItem:
+      type: object
+      required: [claimId, claimNumber, status, queue, total, claimant, department, categories, flags, submittedAt, waitingSince]
+      properties:
+        claimId:
+          type: string
+          format: uuid
+        claimNumber:
+          type: string
+        status:
+          type: string
+          enum: [PENDING_AUDITOR, SAMPLE_AUDIT_PENDING]
+        queue:
+          type: string
+          enum: [AUDITOR_STEP, SAMPLE_AUDIT]
+        total:
+          $ref: '#/components/schemas/Money'
+        claimant:
+          $ref: '#/components/schemas/NullablePersonRef'
+        department:
+          type: string
+          nullable: true
+        categories:
+          type: array
+          items:
+            $ref: '#/components/schemas/ExpenseCategory'
+        flags:
+          type: array
+          items:
+            type: string
+            enum: [DUPLICATE, WEEKEND]
+        submittedAt:
+          type: string
+          format: date-time
+          nullable: true
+        waitingSince:
+          type: string
+          format: date-time
+          nullable: true
+          description: Auditor step activation time, or sample-audit selection time.
+    QueueItemPage:
+      allOf:
+        - $ref: '#/components/schemas/PageMeta'
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/QueueItem'
+    BulkApproveRequest:
+      type: object
+      additionalProperties: false
+      required: [claimIds]
+      properties:
+        claimIds:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            type: string
+            format: uuid
+    BulkItem:
+      type: object
+      required: [claimId, outcome, code, message]
+      properties:
+        claimId:
+          type: string
+          format: uuid
+        outcome:
+          type: string
+          enum: [APPROVED, FAILED]
+        code:
+          type: string
+          nullable: true
+          description: ErrorCode of a FAILED item; null when APPROVED.
+        message:
+          type: string
+          nullable: true
+    BulkResult:
+      type: object
+      required: [results, approved, failed]
+      properties:
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/BulkItem'
+        approved:
+          type: integer
+          minimum: 0
+        failed:
+          type: integer
+          minimum: 0
+
+    BatchSummary:
+      type: object
+      required: [batchId, batchNumber, status, claimCount, totalAmount, createdAt, createdBy, exportedAt, exportedBy, fileName, fileSha256]
+      properties:
+        batchId:
+          type: string
+          format: uuid
+        batchNumber:
+          type: string
+          pattern: '^PB-\d{4}-\d{4}$'
+          example: PB-2026-0007
+        status:
+          $ref: '#/components/schemas/PayoutBatchStatus'
+        claimCount:
+          type: integer
+          minimum: 0
+        totalAmount:
+          $ref: '#/components/schemas/Money'
+        createdAt:
+          type: string
+          format: date-time
+          nullable: true
+        createdBy:
+          type: string
+          format: uuid
+        exportedAt:
+          type: string
+          format: date-time
+          nullable: true
+        exportedBy:
+          type: string
+          format: uuid
+          nullable: true
+        fileName:
+          type: string
+          nullable: true
+          description: Set after export.
+        fileSha256:
+          type: string
+          nullable: true
+          pattern: '^[0-9a-f]{64}$'
+    BatchSummaryPage:
+      allOf:
+        - $ref: '#/components/schemas/PageMeta'
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/BatchSummary'
+    PayoutClaim:
+      type: object
+      required: [claimId, claimNumber, status, total, claimant, department, approvedAt]
+      properties:
+        claimId:
+          type: string
+          format: uuid
+        claimNumber:
+          type: string
+        status:
+          type: string
+          enum: [APPROVED, IN_PAYOUT_BATCH, PAID]
+        total:
+          $ref: '#/components/schemas/Money'
+        claimant:
+          $ref: '#/components/schemas/NullablePersonRef'
+        department:
+          type: string
+          nullable: true
+        approvedAt:
+          type: string
+          format: date-time
+          nullable: true
+    PayoutClaimPage:
+      allOf:
+        - $ref: '#/components/schemas/PageMeta'
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/PayoutClaim'
+    BatchDetail:
+      type: object
+      required: [batch, claims]
+      properties:
+        batch:
+          $ref: '#/components/schemas/BatchSummary'
+        claims:
+          type: array
+          items:
+            $ref: '#/components/schemas/PayoutClaim'
+    CreateBatchRequest:
+      type: object
+      additionalProperties: false
+      required: [claimIds]
+      properties:
+        claimIds:
+          type: array
+          minItems: 1
+          maxItems: 500
+          items:
+            type: string
+            format: uuid
+    ExportSummary:
+      type: object
+      description: Control summary of the exported file (CLAUDE.md 2.8).
+      required: [batchId, batchNumber, fileName, rowCount, totalAmount, fileSha256, exportedAt]
+      properties:
+        batchId:
+          type: string
+          format: uuid
+        batchNumber:
+          type: string
+        fileName:
+          type: string
+          pattern: '^EXPENSEFLOW_PAYOUT_PB-\d{4}-\d{4}_\d{8}\.csv$'
+        rowCount:
+          type: integer
+          minimum: 1
+        totalAmount:
+          $ref: '#/components/schemas/Money'
+        fileSha256:
+          type: string
+          pattern: '^[0-9a-f]{64}$'
+        exportedAt:
+          type: string
+          format: date-time
+
+    SpendItem:
+      type: object
+      required: [key, total, lineCount]
+      properties:
+        key:
+          type: string
+          description: Category, department name or month `YYYY-MM`.
+        total:
+          $ref: '#/components/schemas/Money'
+        lineCount:
+          type: integer
+          minimum: 0
+    SpendReport:
+      type: object
+      required: [groupBy, items, grandTotal]
+      properties:
+        groupBy:
+          type: string
+          enum: [category, department, month]
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/SpendItem'
+        grandTotal:
+          $ref: '#/components/schemas/Money'
+    ViolationItem:
+      type: object
+      required: [ruleId, resultType, count, claimCount]
+      properties:
+        ruleId:
+          type: string
+          example: POL-001
+        resultType:
+          $ref: '#/components/schemas/PolicyResultType'
+        count:
+          type: integer
+          minimum: 0
+        claimCount:
+          type: integer
+          minimum: 0
+    ViolationReport:
+      type: object
+      required: [items, total]
       properties:
         items:
           type: array
-          items: { $ref: "#/components/schemas/Item" }
-        page: { type: integer }
-        pageSize: { type: integer }
-        total: { type: integer }
-    Error:
-      type: object
-      required: [code, message]
-      properties:
-        code: { type: string, example: VALIDATION_ERROR }
-        message: { type: string, example: name is required }
-        details:
-          type: array
           items:
-            type: object
-            properties:
-              field: { type: string }
-              issue: { type: string }
+            $ref: '#/components/schemas/ViolationItem'
+        total:
+          type: integer
+          minimum: 0
+    ApprovalTimeReport:
+      type: object
+      required: [approvedClaims, averageHours, routedClaims, averageHoursRouted]
+      properties:
+        approvedClaims:
+          type: integer
+          format: int64
+          minimum: 0
+        averageHours:
+          type: string
+          nullable: true
+          pattern: '^\d+\.\d{2}$'
+          description: Average hours, two decimals; null when no claim matches.
+        routedClaims:
+          type: integer
+          format: int64
+          minimum: 0
+        averageHoursRouted:
+          type: string
+          nullable: true
+          pattern: '^\d+\.\d{2}$'
 
-  responses:
-    BadRequest:
-      description: Invalid request
-      content:
-        application/json:
-          schema: { $ref: "#/components/schemas/Error" }
-    Unauthorized:
-      description: Missing or invalid token
-      content:
-        application/json:
-          schema: { $ref: "#/components/schemas/Error" }
-    NotFound:
-      description: Resource not found
-      content:
-        application/json:
-          schema: { $ref: "#/components/schemas/Error" }
+    RuleView:
+      type: object
+      required: [ruleKey, value, configVersion, updatedBy, updatedAt]
+      properties:
+        ruleKey:
+          $ref: '#/components/schemas/RuleKey'
+        value:
+          description: Money keys and `sample_audit.rate` are decimal strings; flags are booleans; `hotel.tier1_cities` and `duplicate.match_fields` are string arrays.
+        configVersion:
+          type: integer
+          minimum: 1
+        updatedBy:
+          type: string
+          format: uuid
+          nullable: true
+        updatedAt:
+          type: string
+          format: date-time
+          nullable: true
+    UpdateRuleRequest:
+      type: object
+      additionalProperties: false
+      required: [value]
+      properties:
+        value:
+          description: New value; its type depends on the key (see API-035).

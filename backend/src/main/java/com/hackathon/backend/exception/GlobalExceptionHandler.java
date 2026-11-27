@@ -44,7 +44,8 @@ public class GlobalExceptionHandler {
 		return error(ErrorCode.VALIDATION_FAILED, "Request body is malformed or contains unknown fields", null);
 	}
 
-	@ExceptionHandler({ MethodArgumentTypeMismatchException.class, MissingServletRequestParameterException.class })
+	@ExceptionHandler({ MethodArgumentTypeMismatchException.class, MissingServletRequestParameterException.class,
+			org.springframework.web.multipart.support.MissingServletRequestPartException.class })
 	public ResponseEntity<ErrorResponse> handleBadParameter(Exception ex) {
 		return error(ErrorCode.VALIDATION_FAILED, "A request parameter is missing or has the wrong type", null);
 	}
