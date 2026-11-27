@@ -1,11 +1,14 @@
 // Thin fetch wrapper. All backend calls go through /api, which is proxied
 // to the backend by Vite (dev) or nginx (Docker).
-const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '/api'
+const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '/api/v1'
 
 export class ApiError extends Error {
   constructor(status, body) {
-    // Backend errors are RFC 9457 problem details: { status, title, detail, errors? }
-    super(body?.detail ?? body?.title ?? `Request failed with status ${status}`)
+    // Backend errors use one shape: { code, message, details, traceId } (CLAUDE.md §11.4)
+    super(body?.message ?? `Request failed with status ${status}`)
+    this.code = body?.code
+    this.details = body?.details
+    this.traceId = body?.traceId
     this.status = status
     this.body = body
   }
@@ -18,7 +21,15 @@ async function request(method, path, body) {
     body: body !== undefined ? JSON.stringify(body) : undefined,
   })
   const text = await res.text()
-  const data = text ? JSON.parse(text) : null
+  let data = null
+  if (text) {
+    try {
+      data = JSON.parse(text)
+    } catch {
+      // Non-JSON body (e.g. a proxy error page): keep the HTTP status, drop the body
+      data = null
+    }
+  }
   if (!res.ok) throw new ApiError(res.status, data)
   return data
 }

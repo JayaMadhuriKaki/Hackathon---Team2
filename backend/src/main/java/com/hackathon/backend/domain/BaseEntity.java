@@ -1,4 +1,4 @@
-package com.hackathon.backend.common.entity;
+package com.hackathon.backend.domain;
 
 import java.time.Instant;
 

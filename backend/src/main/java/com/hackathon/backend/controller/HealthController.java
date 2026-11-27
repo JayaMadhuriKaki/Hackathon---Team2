@@ -1,4 +1,4 @@
-package com.hackathon.backend.health;
+package com.hackathon.backend.controller;
 
 import java.time.Instant;
 
@@ -9,7 +9,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 /** Simple app-level health used by the frontend status card. */
 @RestController
-@RequestMapping("/api/health")
+@RequestMapping("/api/v1/health")
 public class HealthController {
 
 	private final JdbcTemplate jdbcTemplate;

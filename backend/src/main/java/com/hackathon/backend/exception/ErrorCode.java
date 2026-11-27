@@ -1,0 +1,39 @@
+package com.hackathon.backend.exception;
+
+import org.springframework.http.HttpStatus;
+
+/** Every error code the API may return, with its HTTP status (architecture/SPEC.md §9). */
+public enum ErrorCode {
+
+	VALIDATION_FAILED(HttpStatus.BAD_REQUEST),
+	UNAUTHENTICATED(HttpStatus.UNAUTHORIZED),
+	FORBIDDEN(HttpStatus.FORBIDDEN),
+	NOT_CURRENT_APPROVER(HttpStatus.FORBIDDEN),
+	NOT_FOUND(HttpStatus.NOT_FOUND),
+	METHOD_NOT_ALLOWED(HttpStatus.METHOD_NOT_ALLOWED),
+	STATE_CONFLICT(HttpStatus.CONFLICT),
+	FILE_TOO_LARGE(HttpStatus.CONTENT_TOO_LARGE),
+	UNSUPPORTED_FILE_TYPE(HttpStatus.UNSUPPORTED_MEDIA_TYPE),
+	RECEIPT_REQUIRED(HttpStatus.UNPROCESSABLE_CONTENT),
+	CLAIM_HAS_NO_LINES(HttpStatus.UNPROCESSABLE_CONTENT),
+	COMMENT_REQUIRED(HttpStatus.UNPROCESSABLE_CONTENT),
+	SELF_APPROVAL_FORBIDDEN(HttpStatus.UNPROCESSABLE_CONTENT),
+	INVALID_DELEGATE(HttpStatus.UNPROCESSABLE_CONTENT),
+	DELEGATION_OVERLAP(HttpStatus.UNPROCESSABLE_CONTENT),
+	CLAIM_NOT_ELIGIBLE_FOR_PAYOUT(HttpStatus.UNPROCESSABLE_CONTENT),
+	IDEMPOTENCY_KEY_REUSED(HttpStatus.UNPROCESSABLE_CONTENT),
+	BUSINESS_RULE_VIOLATION(HttpStatus.UNPROCESSABLE_CONTENT),
+	RATE_LIMITED(HttpStatus.TOO_MANY_REQUESTS),
+	INTERNAL_ERROR(HttpStatus.INTERNAL_SERVER_ERROR);
+
+	private final HttpStatus status;
+
+	ErrorCode(HttpStatus status) {
+		this.status = status;
+	}
+
+	public HttpStatus status() {
+		return status;
+	}
+
+}
