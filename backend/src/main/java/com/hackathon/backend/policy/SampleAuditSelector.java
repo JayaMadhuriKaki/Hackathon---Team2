@@ -17,7 +17,8 @@ public class SampleAuditSelector {
 	}
 
 	public SampleDraw draw(BigDecimal rate) {
-		throw new UnsupportedOperationException("not implemented yet");
+		double value = random.getAsDouble();
+		return new SampleDraw(value, BigDecimal.valueOf(value).compareTo(rate) < 0);
 	}
 
 }
