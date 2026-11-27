@@ -348,10 +348,10 @@ Body `{ "code", "message", "details", "traceId" }` (CLAUDE.md §11.4).
 | ID | Question | Blocks | Proposed default |
 |---|---|---|---|
 | ~~SPEC-Q-01~~ | ~~Who approves when every step is skipped?~~ | — | **Resolved in v0.2** by reading CL-09 as "next level, added if needed" (§5.2); the chain can no longer be empty |
-| **SPEC-Q-02** | Expense categories besides meals, hotel, local cab? Limits for them? | Line items, policy engine, UI | Only `MEALS`, `HOTEL`, `LOCAL_CAB` |
-| **SPEC-Q-03** | Is a comment mandatory on send-back? | API-017, UI | Yes |
+| ~~SPEC-Q-02~~ | Expense categories besides meals, hotel, local cab? | — | **Answered 2026-11-27 (Jaya):** only `MEALS`, `HOTEL`, `LOCAL_CAB` |
+| ~~SPEC-Q-03~~ | Is a comment mandatory on send-back? | — | **Answered 2026-11-27 (Jaya):** yes, `422 COMMENT_REQUIRED` without one |
 | SPEC-Q-04 | Q-11: meals limit = sum of the claimant's meal lines on that date across claims? | POL-001 | Yes — the same "earlier lines" set as §4.3 (excludes `DRAFT`, `AUTO_REJECTED`, `REJECTED`) plus this claim's lines |
-| **SPEC-Q-05** | Duplicate-check scope and matching | POL-006/007/009 | §4.3 |
+| ~~SPEC-Q-05~~ | Duplicate-check scope and matching | — | **Answered 2026-11-27 (Jaya):** mixed scope as in §4.3 — receipt hash and date + receipt number across all employees; vendor + amount + date within the claimant |
 | SPEC-Q-06 | Q-21: receipt types and size | API-010 | PDF, JPG, PNG; 5 MB |
 | SPEC-Q-07 | Q-22: login method | API-002 | Seeded users, email + password, JWT |
 | SPEC-Q-08 | Q-23: average approval time measure | API-032 | Calendar time submit → final approval |
@@ -360,9 +360,9 @@ Body `{ "code", "message", "details", "traceId" }` (CLAUDE.md §11.4).
 | SPEC-Q-11 | Dashboard "spend": which states, which date for month | API-030/031 | §7.3 |
 | SPEC-Q-12 | NFR-008 "page latency": API latency enough, or measure browser page loads? | Ops metrics | API latency + page timings from Playwright/Locust runs |
 | SPEC-Q-13 | Rate limits and JWT lifetime | API-002, API-010 | Login 5/min per IP; uploads 30/min per user; JWT 8 h |
-| **SPEC-Q-14** | CL-16: does a finance head's **clean** claim ≤ 25,000 go to an auditor, or can it auto-approve? | Routing | Always to an auditor (never auto-approved) |
+| ~~SPEC-Q-14~~ | CL-16: does a finance head's clean claim ≤ 25,000 go to an auditor? | — | **Answered 2026-11-27 (Jaya):** always to an auditor; finance head claims are never auto-approved |
 | SPEC-Q-15 | CL-05: is `receiptNumber` required on lines without a receipt (≤ 500)? | Line items | Required on every line |
-| **SPEC-Q-16** | Finance auditors report to the finance head, so an auditor's own claim above 25,000 has the same finance head on the `MANAGER` step and the added `FINANCE_HEAD` step. May one person approve two levels? | Chain engine | Yes — each step is approved separately; no extra approver exists |
+| ~~SPEC-Q-16~~ | May one finance head approve both the `MANAGER` and `FINANCE_HEAD` steps of an auditor's claim above 25,000? | — | **Answered 2026-11-27 (Jaya):** yes; each step is approved separately |
 
 ## 12. Proposed assumptions (to log in CLAUDE.md §6.1 once accepted)
 

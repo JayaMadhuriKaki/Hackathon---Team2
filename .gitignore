@@ -21,3 +21,6 @@ __pycache__/
 playwright-report/
 test-results/
 
+
+# Local receipt and payout files when running the backend outside Docker
+backend/data/
