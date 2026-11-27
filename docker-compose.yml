@@ -25,13 +25,25 @@ services:
     restart: unless-stopped
 
   backend:
-    build: ./backend
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
     environment:
       DB_URL: jdbc:postgresql://postgres:5432/${DB_NAME:-hackathon}
-      DB_USERNAME: ${DB_USERNAME:-postgres}
-      DB_PASSWORD: ${DB_PASSWORD:-postgres}
+      # Flyway + demo seed run as the database owner; the app runs as a least-privilege role
+      DB_OWNER_USERNAME: ${DB_USERNAME:-postgres}
+      DB_OWNER_PASSWORD: ${DB_PASSWORD:-postgres}
+      DB_USERNAME: ${DB_APP_USERNAME:-expenseflow_app}
+      DB_PASSWORD: ${DB_APP_PASSWORD:-expenseflow_app_dev}
+      JWT_SECRET: ${JWT_SECRET:-}
+      # Synthetic demo logins only (DATA-004); override in .env
+      SEED_DEMO_USERS: ${SEED_DEMO_USERS:-true}
+      SEED_DEMO_PASSWORD: ${SEED_DEMO_PASSWORD:-Demo-Only-2026!}
       CORS_ALLOWED_ORIGINS: http://localhost:3000,http://localhost:5173
       TZ: UTC
+    volumes:
+      - receipts:/data/receipts
+      - exports:/data/exports
     ports:
       - "${BACKEND_PORT:-8080}:8080"
     depends_on:
@@ -74,3 +86,5 @@ services:
 volumes:
   pgdata:
   grafanadata:
+  receipts:
+  exports:

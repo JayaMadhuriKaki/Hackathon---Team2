@@ -1,0 +1,9 @@
+# Build context for the backend image is the repo root (it needs database/migrations).
+# Allow-list only what the backend build uses.
+*
+!backend
+!database/migrations
+backend/target
+backend/data
+backend/.idea
+backend/.vscode

@@ -17,8 +17,8 @@ Updated at the end of every task (CLAUDE.md §15). Report actual results only.
 | 2 | Architecture | In progress | `architecture/SPEC.md` v0.3; ADR-000 (stack; Proposed items P-01..P-11 await confirmation) and ADR-001 (approval chain) written; diagrams and `security-review.md` not started |
 | 3 | API design | Not started | API catalogue API-001..API-036 fixed in `architecture/SPEC.md`; `api-contracts.yaml` still the template placeholder |
 | 4a | Policy engine (test-first) | Done | Base fixes (API-001 path, error shape, trace ID); 9 rules + `PolicyEngine` + `RoutingDecider`, tests written and confirmed failing first |
-| 4b | Approval chain + delegation | Not started | |
-| 4c | Remaining backend | Not started | Base Spring Boot app exists (health endpoint only) |
+| 4b | Approval chain + delegation | Done | Chain engine, step authorizer, delegation rules, sample draw — JUnit tests written and confirmed failing first |
+| 4c | Remaining backend | Done (runs in Docker) | Flyway V001–V005, least-privilege app role, JWT login, API-002..038, idempotency, metrics, demo users. Gaps: `api-contracts.yaml` not written yet; full Python seed (DATA-001..003) not written; pytest suite not written |
 | 5 | Frontend | Not started | Base React app exists (home page + health card only) |
 | 6 | Validation | Not started | |
 | 7 | Deployment | In progress | Docker Compose stack and CI (tests + build) exist from the base setup; dependency check and seed not done |
@@ -77,6 +77,10 @@ Backbone v0.3 §15 decisions postdate the child specs; where a child spec differ
 | 2026-11-27 | `backend: .\mvnw.cmd -Dtest=RoutingDeciderTest test` (before implementation) | 9 run, 9 failed as intended |
 | 2026-11-27 | `backend: .\mvnw.cmd test` | **61 run, 0 failed** (46 policy rule cases, 9 routing, 4 health/error shape, 1 purity, 1 context) |
 | 2026-11-27 | `frontend: npm run lint; npm run build` | Lint clean; build succeeded |
+| 2026-11-27 | `backend: .\mvnw.cmd -Dtest=<4b tests> test` (before implementation) | 43 run, 42 failed as intended |
+| 2026-11-27 | `backend: .\mvnw.cmd test` | 104 run, 0 failed (4b implemented) |
+| 2026-11-27 | `backend: .\mvnw.cmd clean test` (with API flow tests on H2) | 131 run, 130 passed, 1 failed: leftover temp export file from an earlier run; fixed with per-run temp dirs, **not re-run** (stopped on request to prioritise Docker) |
+| 2026-11-27 | `docker compose up -d --build backend` + HTTP smoke script | Migrations V001–V005 applied, schema validated, 8 demo users seeded; login, create, line, submit → PENDING_MANAGER, manager approve → APPROVED, other employee → 404, dashboard, payout eligible, audit search, 8 metric series, frontend proxy — all OK |
 
 ## Open blockers
 
@@ -88,4 +92,4 @@ All business-critical spec questions are answered (2026-11-27, Jaya): SPEC-Q-02 
 
 ## Next step
 
-Phase 4b: approval-chain engine, current-step authorisation, delegation rules and sample-audit selector — pure modules, JUnit tests first (backend/SPEC.md tasks 6–8). In parallel the team confirms ADR-000 Proposed items P-02, P-03, P-04 and P-06, which task 9 (Flyway, entities, security) needs.
+Re-run `mvnw clean test` to confirm 131/131. Then: `api-contracts.yaml` (API-001..038), Python Faker seed (DATA-001..003), pytest API suite, frontend wiring. ADR-000 P-02/P-03/P-04/P-06 were implemented as proposed on the owner's instruction "complete entire backend work" — ADR-000 status still to be updated. Demo password default in `docker-compose.yml` (`SEED_DEMO_PASSWORD`) and app DB password default should be overridden in `.env`.
