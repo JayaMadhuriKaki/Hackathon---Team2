@@ -26,7 +26,8 @@
 | Source of truth | `requirements/requirements.docx` (provided) |
 | Supporting docs | `requirements/use-cases.docx`, `requirements/requirement-analysis.md` |
 | Currency | INR (Indian digit grouping used in the source: 1,00,000 = 100,000) |
-| Tech stack | **Not yet approved.** See §8. Do not scaffold code until it is approved. |
+| Tech stack | **Approved** — React 19 (Vite) · Spring Boot 4.1.x on JDK 21 · PostgreSQL 18 in Docker · JUnit 5 unit tests + pytest API tests · Docker Compose · Prometheus + Grafana. See §8. |
+| Event rules | `requirements/AI_Manthan_Hackathon___Prerequisites_Guide.docx` — see §8.2 |
 | Team / deadline / demo slot | `<fill in>` |
 
 ### 1.1 Problem statement (summary of the source document)
@@ -147,6 +148,13 @@ These answers are now binding requirements. They take precedence over any earlie
 | CL-09 | Q-10 | If a step has **no approver** (for example the claimant has no manager), the claim **moves to the next level** of the chain. |
 | CL-10 | Q-17 | Only users with the **finance head or admin** role can edit policy configuration. Every change is recorded in the audit trail. |
 | CL-11 | Q-16, Q-15 | **Payout CSV format and batch ownership** — the owner asked Claude to decide from the requirements. Decision in §2.8. |
+| CL-12 | Q-08 | After **send-back** and resubmission, the claim **restarts**: the policy engine runs again on the edited lines, the chain is recalculated from the new total, and approval begins again at the first step (manager). Earlier approvals on that claim no longer count. |
+| CL-13 | Q-09 | A **delegate must be a finance auditor or a finance head**. Delegation never lets anyone approve their own claim (B-02/B-03). |
+| CL-14 | Q-18 | Claims selected for the **10% sample audit are held from payout** until a finance auditor reviews them. The auditor can approve (claim becomes eligible for payout) or reject with a mandatory comment (CL-04). |
+| CL-15 | Q-19 | **Every user, in every role, sees their own claims.** Beyond that, approvers see only what they need to act: claims currently assigned to them (or to someone they are delegate for) and claims they have already acted on (ASM-008). |
+| CL-16 | Q-26 | The **finance head's own claims are approved by a finance auditor**, whatever the amount. They never go to a finance head step. |
+| CL-17 | Tech stack | Stack confirmed by the project owner: **React 19** frontend, **Spring Boot** backend, **PostgreSQL 18 in Docker**, **pytest for backend and API tests**, **Docker Compose** delivery, **Prometheus + Grafana** monitoring. Versions follow the AI Manthan Prerequisites Guide (§8). Supersedes the earlier FastAPI choice (ASM-011, withdrawn). |
+| CL-18 | Testing | **JUnit 5** (via `spring-boot-starter-test`) is used for Java unit tests — policy engine, approval-chain engine and other business logic — alongside **pytest** for backend API and integration tests. |
 
 ### 2.7 Routing summary (derived from CL-01 to CL-03)
 
@@ -160,6 +168,10 @@ These answers are now binding requirements. They take precedence over any earlie
 | A line above 500 INR has no receipt (POL-005) | Cannot be submitted — blocked by validation (ASM-003) |
 | Any line is flagged as a duplicate (POL-006, POL-007, POL-009) | Route to approval chain with the flag shown; never auto-approved (ASM-004) |
 | The step has no approver (e.g. no manager) | Skip to the next level (CL-09) |
+| Claimant is the finance head | Finance auditor only, any amount (CL-16) |
+| Claimant would be the approver of a step | Skip that step to the next level (ASM-009) |
+| Auto-approved and selected for 10% sample audit | Held from payout until an auditor reviews (CL-14) |
+| Sent back and resubmitted | Restart: re-run policy, recalculate chain, begin at manager (CL-12) |
 
 Evaluation order: (1) limit breaches → auto-reject; (2) otherwise, if total > 25,000, any weekend line or any duplicate flag → approval chain; (3) otherwise → auto-approve. An auto-rejected claim is never routed.
 
@@ -237,11 +249,14 @@ stateDiagram-v2
     PendingManager --> Rejected : reject + mandatory comment (CL-04)
     PendingAuditor --> Rejected : reject + mandatory comment (CL-04)
     PendingFinanceHead --> Rejected : reject + mandatory comment (CL-04)
-    SentBack --> Submitted : employee resubmits (see Q-08)
+    SentBack --> Submitted : employee resubmits; chain restarts (CL-12)
     PendingManager --> Approved : approved, total <= 25,000
     PendingAuditor --> Approved : approved, total <= 1,00,000
     PendingFinanceHead --> Approved : approved
-    AutoApproved --> Approved : (CL-02)
+    AutoApproved --> Approved : not selected for sample audit (CL-02)
+    AutoApproved --> SampleAuditPending : selected in 10% sample (FR-011, CL-14)
+    SampleAuditPending --> Approved : auditor approves (CL-14)
+    SampleAuditPending --> Rejected : auditor rejects + comment (CL-14)
     Approved --> InPayoutBatch : added to batch (FR-012)
     InPayoutBatch --> Paid : batch CSV exported (CL-06)
     AutoRejected --> [*]
@@ -275,7 +290,7 @@ The source requires the design to be reviewed for ways to bypass approvals. Ever
 |---|---|---|
 | B-01 | Splitting one expense into several lines or claims to stay under a limit or threshold | Flag and surface; exact handling needs a decision (Q-06) |
 | B-02 | Approving your own claim (directly, as delegate, or as admin) | Backend blocks self-approval at every step |
-| B-03 | Delegating to yourself, to your own claimant, or creating delegation chains | Backend validates delegate identity |
+| B-03 | Delegating to yourself, to your own claimant, to an unauthorised role, or creating delegation chains | Delegate must be a finance auditor or finance head (CL-13), not the delegator, not the claimant; no delegation of a delegation |
 | B-04 | Editing a claim after it has been submitted or approved | Lines are locked after submit; edits only in Draft/SentBack |
 | B-05 | Changing the amount during "send back" to fall below a threshold | Re-run policy and re-calculate the chain on every resubmission |
 | B-06 | Calling an API directly to skip a step or change state | State transitions validated server-side against the state machine |
@@ -284,7 +299,7 @@ The source requires the design to be reviewed for ways to bypass approvals. Ever
 | B-09 | Adding an already-paid or unapproved claim to a payout batch | Batch accepts only claims in Approved state; one claim, one batch |
 | B-10 | Reading another employee's claims by changing an ID in the URL | Object-level authorization on every read (FR-019) |
 | B-11 | Tampering with or deleting audit entries | Append-only table; no update/delete in code; DB permissions deny it |
-| B-12 | Avoiding the 10% sample audit | Random selection made server-side with a recorded seed/log |
+| B-12 | Avoiding the 10% sample audit | Random selection made server-side with a recorded seed/log; sampled claims cannot enter a payout batch until reviewed (CL-14) |
 
 ---
 
@@ -301,8 +316,8 @@ These were found while reading `requirements.docx`. **Items marked Critical bloc
 | Q-05 | Thresholds | Is "above 25,000" / "above 1,00,000" strictly greater than? Is it measured on the claim total, on approved lines only, or per line? | Ambiguous | **Yes** | Answered (CL-03) |
 | Q-06 | Splitting | Should claim-splitting (several claims or lines just under a limit or threshold) be detected? If yes, what is the rule? | Missing | No | Open |
 | Q-07 | Approver actions | The source lists comment, send back and delegate. Can an approver also **reject** a claim outright? | Missing | **Yes** | Answered (CL-04) |
-| Q-08 | Send back | After send-back and resubmission, does the chain restart from the manager or resume at the step that sent it back? | Missing | **Yes** | Open |
-| Q-09 | Delegation | Who can be a delegate (same role only? any manager?), who sets it up (the approver or admin?), does it need start/end dates, and can a delegate approve a claim from someone they report to? | Missing | **Yes** | Open |
+| Q-08 | Send back | After send-back and resubmission, does the chain restart from the manager or resume at the step that sent it back? | Missing | **Yes** | Answered (CL-12) |
+| Q-09 | Delegation | Who can be a delegate (same role only? any manager?), who sets it up (the approver or admin?), does it need start/end dates, and can a delegate approve a claim from someone they report to? | Missing | **Yes** | Answered (CL-13); dates per ASM-007 |
 | Q-10 | Hierarchy gaps | Who approves a claim from someone with no manager, or from the finance head? Who is the "manager" step for a finance auditor's own claim? | Missing | **Yes** | Answered (CL-09) |
 | Q-11 | Meals limit | Is 1,500 INR per day the total of all meal lines on the same date for the same employee, across all their claims? | Ambiguous | No | Open |
 | Q-12 | Hotel nights / city tier | How are the number of nights and the city captured on a hotel line? Which cities are tier-1? (No list is provided.) *Not covered by CL-05.* | Missing | **Yes** | Answered (CL-08); nights per ASM-005 |
@@ -311,15 +326,15 @@ These were found while reading `requirements.docx`. **Items marked Critical bloc
 | Q-15 | Paid status | Do claims move to Paid when the CSV is exported, or when someone confirms the bank payment? Who creates a payout batch? | Ambiguous | **Yes** | Answered (CL-06, CL-11) |
 | Q-16 | CSV format | What columns, order, delimiter and file name does the "mock bank-file format" use? | Missing | **Yes** | Decided (CL-11, §2.8) |
 | Q-17 | Config changes | Who can edit policy configuration (finance head as admin?), and do changes apply to claims already submitted? | Missing | **Yes** | Answered (CL-10) |
-| Q-18 | Sample audit | 10% of auto-approved claims over what period? What happens to a sampled claim (blocks payout until reviewed, or reviewed after payment)? What if the audit finds a problem? | Missing | **Yes** | Open |
-| Q-19 | Visibility | Employees see only their own claims. What exactly can managers, auditors and the finance head see (direct reports only? whole department? everything)? Who can see the dashboard and audit trail? | Missing | **Yes** | Open |
+| Q-18 | Sample audit | 10% of auto-approved claims over what period? What happens to a sampled claim (blocks payout until reviewed, or reviewed after payment)? What if the audit finds a problem? | Missing | **Yes** | Answered (CL-14) |
+| Q-19 | Visibility | Employees see only their own claims. What exactly can managers, auditors and the finance head see (direct reports only? whole department? everything)? Who can see the dashboard and audit trail? | Missing | **Yes** | Answered (CL-15); details per ASM-008, ASM-010 |
 | Q-20 | Admin role | What can the finance head do as admin (manage users, roles, config, delegations)? | Missing | No | Open |
 | Q-21 | Receipts | Allowed file types and maximum size for receipt uploads? Multiple files per line? | Missing | No | Open |
 | Q-22 | Authentication | How do users sign in (local accounts with seeded passwords, SSO mock, role switcher for demo)? | Missing | No | Open |
 | Q-23 | Approval time | How is "average approval time" measured (submit to final approval? per step? business hours or calendar time?) | Ambiguous | No | Open |
 | Q-24 | Review queue | Which filters does the auditor queue need, and can bulk approve include claims with policy flags? | Ambiguous | No | Open |
 | Q-25 | Draft rules | Is a receipt required to save a draft, or only to submit? Can a submitted claim be withdrawn? | Ambiguous | No | Open |
-| Q-26 | Self-approval | Under CL-09 a claim skips a missing approver. If the claimant **is** the approver for a step (for example the finance head's own claim above 1,00,000 INR), the step cannot be performed. Who approves it? | Missing | **Yes** | Open |
+| Q-26 | Self-approval | Under CL-09 a claim skips a missing approver. If the claimant **is** the approver for a step (for example the finance head's own claim above 1,00,000 INR), the step cannot be performed. Who approves it? | Missing | **Yes** | Answered (CL-16) |
 
 ### 6.1 Assumption log
 | ID | Assumption | Related | Confirmed? |
@@ -330,6 +345,12 @@ These were found while reading `requirements.docx`. **Items marked Critical bloc
 | ASM-004 | A duplicate is **flagged** (as the source says), not rejected: the claim goes to the approval chain with the flag visible and cannot be auto-approved | POL-006/007/009 | No |
 | ASM-005 | Hotel lines capture check-in and check-out dates; nights = check-out − check-in; per-night amount = line amount ÷ nights | POL-002/003 | No |
 | ASM-006 | "Bangalore" also matches "Bengaluru", and "Delhi" also matches "New Delhi" | CL-08 | No |
+| ASM-007 | A delegation has a start date and an end date (the leave period) and only one active delegate per approver at a time | CL-13 | No |
+| ASM-008 | Approvers can open claims assigned to them (directly or as delegate) and claims they have acted on, so they can review receipts and history; nothing else beyond their own claims | CL-15 | No |
+| ASM-009 | If the claimant would approve a step of their own claim (e.g. a finance auditor's claim reaching the auditor step), that step is skipped to the next level, extending CL-09; a finance auditor's own claim above 25,000 INR therefore goes to the finance head | CL-09, B-02 | No |
+| ASM-010 | The dashboard shows only aggregate figures and is visible to finance auditors and the finance head/admin; the full audit trail is visible to the finance head/admin, and everyone else sees the audit history of claims they can open | CL-15, FR-015–018 | No |
+| ASM-011 | ~~Backend is FastAPI~~ — **withdrawn**; replaced by the owner's Spring Boot decision (CL-17) | CL-17 | Withdrawn |
+| ASM-012 | pytest tests the backend **through its HTTP API** (black-box); Java classes such as the policy engine are unit-tested with **JUnit 5**, because pytest cannot load Java code | CL-17, CL-18, §16 | **Yes — confirmed as CL-18** |
 
 ---
 
@@ -360,37 +381,66 @@ demo/screenshots|demo-video
 **Planned additions** (create only when that phase starts):
 - `docker-compose.yml` and `.env.example` at repo root (Deployment)
 - `.github/workflows/` or the CI system's equivalent (Deployment)
-- `ops/` — runbook, alert definitions, metrics dashboard config (Support/SRE)
+- `ops/` — runbook, Prometheus config and alert rules, Grafana dashboards (Support/SRE)
+- `tests/load/` — Locust scripts (performance testing artifact)
 - `architecture/adr/` — architecture decision records
 
 ---
 
-## 8. Technology Stack — Approval Gate
+## 8. Technology Stack (approved — CL-17)
 
-The stack is **not yet decided**. In the Architecture phase:
-1. Propose a stack with a one-line reason per layer, considering team skills, the time box and the requirements (file uploads, CSV export, role-based access, dashboards, Docker Compose, CI, metrics).
-2. Record it as `architecture/adr/ADR-000-technology-stack.md`.
-3. **Wait for explicit approval.** Once approved, fill in the table below.
-4. After approval, **never change the stack** (language, framework, database, ORM, UI library, test framework) without new approval.
+Source: **AI Manthan Hackathon – Prerequisites Guide**, §3 (compatible versions) and §4 (Track A stack). The guide says: *use exactly these versions and do not substitute newer ones during the hackathon.* The stack is now fixed. **Changing any item below needs explicit approval.**
 
-| Layer | Choice | Approved on | Approved by |
+### 8.1 Stack
+
+| Layer | Choice and version | Source | Notes |
 |---|---|---|---|
-| Frontend | `<pending>` | | |
-| Backend | `<pending>` | | |
-| Database | `<pending>` | | |
-| ORM / data access | `<pending>` | | |
-| Auth | `<pending>` | | |
-| File storage (receipts) | `<pending>` | | |
-| Testing (unit / API / component / E2E) | `<pending>` | | |
-| CI | `<pending>` | | |
-| Metrics / dashboard | `<pending>` | | |
+| OS (laptops) | Windows 10/11; macOS/Linux use the same versions | Guide intro | Scripts must work in PowerShell; prefer Docker for anything OS-specific |
+| Frontend | **React 19**, built with **Vite 7 or later** | Owner (CL-17); Vite from guide §4 | Node.js **26.13.1** with npm. Pick JavaScript or TypeScript once and keep it |
+| Backend | **Spring Boot 4.1.x on JDK 21 (Temurin)** | Owner (CL-17); version from guide §3/§4 | Use the **Maven wrapper** (`mvnw` / `mvnw.cmd`) committed in the repo, so no build tool is installed on the laptop. `JAVA_HOME` must point to JDK 21 |
+| Request validation | Jakarta Bean Validation (`spring-boot-starter-validation`) | Part of Spring Boot | Every DTO validated; central `@RestControllerAdvice` error handler |
+| Database | **PostgreSQL 18.x** (`postgres:18` Docker image) | Owner (CL-17); guide §3 | Never install PostgreSQL on the laptop |
+| Data access | Spring Data JPA (Hibernate) + PostgreSQL JDBC driver | Proposed (standard for Spring Boot) | Repository methods or parameterized JPQL only — no string-built SQL |
+| Migrations | Flyway | Proposed (Spring Boot auto-configures it) | Versioned scripts in `database/migrations/` (copied into the backend classpath at build) |
+| Auth | Spring Security with JWT bearer tokens; BCrypt password hashing for seeded synthetic users | Proposed | Login method still open (Q-22) |
+| Receipt storage | Local Docker volume, files named by generated ID, SHA-256 stored | Proposed | Company AWS is not allowed (§8.2) |
+| Synthetic data | Python **Faker** script in `database/seeds/` (same Python 3.13 env as pytest) | Guide §3 | Fixed random seed; writes to PostgreSQL |
+| Backend and API tests | **pytest** on Python 3.13 with `httpx`/`requests`, calling the running Spring Boot API | Owner (CL-17) | Covers API integration, approval-chain and policy behaviour end to end through HTTP. Tests in `tests/backend/` and `tests/integration/` |
+| Java unit tests | **JUnit 5** (`spring-boot-starter-test`) | **Owner (CL-18)** | Needed for test-first unit tests of the policy and approval-chain engines (§16.1); guide §4 allows JUnit |
+| Manual API checks | Postman (VS Code extension) or curl | Guide §4 | |
+| Frontend component tests | Vitest + React Testing Library | Proposed | Needed for §16.4 |
+| UI / E2E tests | Playwright 1.60 or later | Guide §4 (kept — owner did not remove it) | Needed for the 10 written E2E cases. If browser download is blocked, use channel `msedge` or `chrome` |
+| Load testing | Locust (pip, Python 3.13 env) | Guide §4 (kept) | Performance-testing artifact |
+| Delivery | **Docker Compose** | Owner (CL-17) | One `docker compose up` starts PostgreSQL, backend, frontend, Prometheus and Grafana and seeds demo data (NFR-006) |
+| CI | GitHub Actions, or a local script running lint and tests | Required by `requirements.docx` (Deployment phase); guide §4 | Runs `mvnw verify`, pytest, frontend tests; dependency check with OWASP Dependency-Check (Maven) and `npm audit` (NFR-007) |
+| Monitoring | **Prometheus + Grafana** (Docker images) | Owner (CL-17) | Spring Boot Actuator + Micrometer Prometheus registry exposes `/actuator/prometheus` |
+| Linting / formatting | Checkstyle or Spotless (Java); ESLint + Prettier (frontend) | Proposed | |
+| UI design | Wireframes drafted with Claude; Figma only if approved | Guide §4 | |
+| Tracking | Shared Excel / Google Sheets workbooks (`deliverables/*.xlsx`) | Guide §2 | Replaces Jira |
+
+**Items marked "Proposed"** are not named in the guide but are needed to meet this file's standards. Each must be confirmed in ADR-000 before it is added; do not add any other dependency without a stated reason (§7.4).
+
+**Not used:** FastAPI or a Node backend, Python 3.15, JDK 27, SQLite, an installed Maven/Gradle (use the wrapper), pip-installed Superset/Airflow, k6 on the host, the PostgreSQL desktop installer, Jira, company AWS.
+
+**Python's role:** Python 3.13 is used only for pytest API tests, the Faker seed script and Locust — never for application code.
+
+### 8.2 Event rules (mandatory, from the guide)
+1. **Synthetic or public data only.** No client or confidential data on the laptop or in prompts.
+2. **Open-source or free tools only.** Jira and company AWS resources are not used.
+3. **Code stays on the laptop or in the company Git repository.**
+4. **Start only from the starter templates.** No pre-built solution code. If a starter template is provided, build on it; otherwise scaffold with the official generators (e.g. `npm create vite@latest`) and write the rest during the event.
+5. **Use exactly the versions in §8.1.** Do not upgrade during the hackathon.
+6. Installers need admin rights; pip/npm packages, Docker images and VS Code extensions do not. Never ask a participant to install system software — use Docker or packages instead.
+
+### 8.3 Environment check
+Before Phase 0, confirm (from guide §6): `git --version`; `java -version` shows 21 and `JAVA_HOME` points to JDK 21; `py -3.13 --version` and a working `.venv` with `pip install pytest httpx faker`; `node -v` = v26.13.1 and a Vite React build; Playwright Chromium install (or Edge/Chrome fallback); `docker run --rm hello-world`; PostgreSQL 18 in Docker. Record results in `PROGRESS.md`.
 
 ---
 
 ## 9. Architecture Standards
 
 1. **Modular architecture with separation of concerns.** Frontend, backend, database and integrations are logically separate. No business logic in UI components or HTTP route handlers.
-2. Backend layers: **routes/controllers → services (business rules) → repositories (data access) → database**. The **policy engine** and the **approval-chain engine** are separate, pure, independently testable modules.
+2. Backend layers (Spring Boot packages): **`controller` → `service` (business rules) → `repository` (Spring Data JPA) → database**, plus `dto`, `domain`, `config`, `security`, `exception`. The **policy engine** and the **approval-chain engine** are separate, pure, independently testable modules.
 3. **Contract first.** Define or update `architecture/api-contracts.yaml` before implementing or changing any endpoint or any frontend call.
 4. **Consistent naming:**
 
@@ -429,7 +479,7 @@ The stack is **not yet decided**. In the Architecture phase:
 1. **Server-side validation for every external input**: body, path, query, headers and files. Reject unknown fields where practical.
 2. **Business rules are enforced on the backend** — policy rules, thresholds, state transitions, self-approval blocks, delegation rules and visibility rules.
 3. **Appropriate HTTP status codes:** 200, 201, 204, 400 (malformed), 401 (not authenticated), 403 (not allowed), 404 (not found or not visible), 409 (state conflict, e.g. approving an already-approved claim), 413 (file too large), 415 (bad file type), 422 (business-rule failure), 429 (rate limit), 500.
-4. **Consistent exception handling:** one central error handler; every error uses the standard shape `{ "code", "message", "details", "traceId" }`. No stack traces in responses.
+4. **Consistent exception handling:** one central error handler (`@RestControllerAdvice`); every error uses the standard shape `{ "code", "message", "details", "traceId" }`. No stack traces in responses.
 5. **Authentication and authorization** on every non-public endpoint, including **object-level checks** (FR-019, B-10).
 6. **Never expose secrets or sensitive data** in responses, logs, errors or the frontend bundle.
 7. **Parameterized queries or safe ORM operations only.** No SQL built by string concatenation.
@@ -474,9 +524,9 @@ The stack is **not yet decided**. In the Architecture phase:
 
 | # | Phase | Command | Exit criteria |
 |---|---|---|---|
-| 0 | Setup | — | `PROGRESS.md` created; repo inspected; Git initialised |
+| 0 | Setup | — | Environment check (§8.3) passed; `PROGRESS.md` created; repo inspected; Git initialised |
 | 1 | Requirement analysis | `/analyse-requirements` | `requirement-analysis.md` complete; §6 questions sent; traceability workbook started |
-| 2 | Architecture | `/design-architecture` | Diagrams, state machine, policy-config design, ADR-000 (stack) and ADR-001 (approval chain), bypass review — **stack approved** |
+| 2 | Architecture | `/design-architecture` | Diagrams, state machine, policy-config design, ADR-000 (records the §8 stack and confirms the "Proposed" items) and ADR-001 (approval chain), bypass review |
 | 3 | API design | `/generate-apis` | Contract linted; API inventory complete |
 | 4a | Policy engine (test-first) | `/build-backend` | Failing tests for every POL rule written first, then engine; all policy tests pass |
 | 4b | Approval chain + delegation | `/build-backend` | Threshold and delegation tests pass |
@@ -529,9 +579,9 @@ Required content:
 
 ## 16. Testing Standards
 
-1. **Unit tests for business logic** — every policy rule (POL-001 to POL-008) has its own tests, written **before** the policy engine.
-2. **Approval tests** — every threshold boundary on the claim total (24,999.99 / 25,000.00 / 25,000.01 and 99,999.99 / 1,00,000.00 / 1,00,000.01 INR, per CL-03), auto-approve only at ≤ 25,000 with no weekend line (CL-02), weekend routing to manager, rejection with and without a comment (CL-04), every chain path, send-back, and delegation (active, expired, invalid delegate, self-approval attempt).
-3. **API integration tests** — every operation: happy path, validation errors, 401, 403 (including another employee's claim), 404, 409 state conflicts.
+1. **Unit tests for business logic** — every policy rule (POL-001 to POL-009) has its own JUnit 5 tests (CL-18), written **before** the policy engine. The same rules are also covered by pytest API tests.
+2. **Approval tests** — every threshold boundary on the claim total (24,999.99 / 25,000.00 / 25,000.01 and 99,999.99 / 1,00,000.00 / 1,00,000.01 INR, per CL-03), auto-approve only at ≤ 25,000 with no weekend line (CL-02), weekend routing to manager, rejection with and without a comment (CL-04), send-back restart (CL-12), finance head's claim routed to auditor (CL-16), sample-audit hold blocking payout (CL-14), visibility of other users' claims returning 404 (CL-15), every chain path, send-back, and delegation (active, expired, invalid delegate, self-approval attempt).
+3. **API integration tests (pytest, against the running backend)** — every operation: happy path, validation errors, 401, 403 (including another employee's claim), 404, 409 state conflicts.
 4. **Frontend component tests** — forms, validation messages, loading/empty/error states, duplicate-submit prevention, bulk actions.
 5. **End-to-end** — at least **10 written E2E cases** covering the demo story (required by source).
 6. Every feature has **positive, negative, boundary and edge-case** scenarios. Examples: amount 0, negative, very large; receipt at exactly 500 INR; same receipt with different file name; weekend dates; claims with no manager.
@@ -580,7 +630,7 @@ Keep documentation synchronized with the actual implementation. A task is not do
 ## 19. Final Acceptance Checklist
 
 - [ ] All agreed acceptance criteria satisfied, with evidence in `validation-matrix.xlsx`
-- [ ] Every Must-have item FR-001 to FR-020 and POL-001 to POL-009 validated, and every confirmed clarification CL-01 to CL-11 honoured
+- [ ] Every Must-have item FR-001 to FR-020 and POL-001 to POL-009 validated, and every confirmed clarification CL-01 to CL-17 honoured
 - [ ] Frontend and backend integration works end to end
 - [ ] Every documented API verified against the contract
 - [ ] Error handling verified (validation, 401, 403, 404, 409, upload limits)
@@ -597,5 +647,8 @@ Keep documentation synchronized with the actual implementation. A task is not do
 
 | Date | Decision | Reason | Approved by |
 |---|---|---|---|
+| 2026-11-27 | Added JUnit 5 for Java unit tests; pytest stays for backend API and integration tests | pytest cannot unit-test Java code; policy engine must be built test-first | Project owner |
+| 2026-11-27 | Stack confirmed: React 19 (Vite), **Spring Boot 4.1.x / JDK 21**, PostgreSQL 18 in Docker, pytest for backend and API tests, Docker Compose, Prometheus + Grafana. FastAPI withdrawn | Owner's decision; versions per AI Manthan Prerequisites Guide | Project owner |
+| 2026-11-27 | Recorded clarifications CL-12 to CL-16 (send-back restarts chain, delegates limited to finance auditor/head, sampled claims held from payout, own-claim visibility, finance head's claims approved by auditor) | Answers to Q-08, Q-09, Q-18, Q-19, Q-26 | Project owner |
 | 2026-11-27 | Recorded clarifications CL-07 to CL-11 (limit breach auto-rejects claim, tier-1 city list, skip missing approver, policy config by finance head/admin, payout CSV format decided by Claude) | Answers to Q-01, Q-02, Q-10, Q-12, Q-16, Q-17 | Project owner |
 | 2026-11-27 | Recorded clarifications CL-01 to CL-06 (policy limits, auto-approve ceiling, weekend routing, claim-total thresholds, outright rejection, date + receipt-number uniqueness, Paid on export) | Answers from project owner to Q-01–Q-07, Q-12, Q-14, Q-15 | Project owner |
