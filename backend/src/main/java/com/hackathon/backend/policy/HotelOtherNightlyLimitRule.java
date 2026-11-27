@@ -2,7 +2,7 @@ package com.hackathon.backend.policy;
 
 import java.util.List;
 
-/** POL-003: Hotel per-night limit in all other cities (ASM-005). */
+/** POL-003: hotel per-night limit in all other cities (ASM-005). */
 public class HotelOtherNightlyLimitRule implements PolicyRule {
 
 	@Override
@@ -12,7 +12,7 @@ public class HotelOtherNightlyLimitRule implements PolicyRule {
 
 	@Override
 	public List<PolicyResult> evaluate(LineInput line, EvalContext context) {
-		throw new UnsupportedOperationException("POL-003 not implemented yet");
+		return HotelNightlyLimitSupport.evaluate(line, context, false, ruleId(), "hotel.max_per_night.other");
 	}
 
 }

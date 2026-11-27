@@ -1,8 +1,14 @@
 package com.hackathon.backend.policy;
 
+import static com.hackathon.backend.policy.RuleSupport.money;
+
+import java.math.BigDecimal;
 import java.util.List;
 
-/** POL-005: Receipt mandatory above the threshold; blocks submit (ASM-003). */
+/**
+ * POL-005: a receipt is mandatory above {@code receipt.mandatory_above}. The result is a
+ * VALIDATION result that blocks submit; it is never stored (ASM-003).
+ */
 public class ReceiptRequiredRule implements PolicyRule {
 
 	@Override
@@ -12,7 +18,12 @@ public class ReceiptRequiredRule implements PolicyRule {
 
 	@Override
 	public List<PolicyResult> evaluate(LineInput line, EvalContext context) {
-		throw new UnsupportedOperationException("POL-005 not implemented yet");
+		BigDecimal threshold = context.config().receiptMandatoryAbove();
+		if (line.hasReceipt() || line.amount().compareTo(threshold) <= 0) {
+			return List.of();
+		}
+		return RuleSupport.one(line, ruleId(), ResultType.VALIDATION, "receipt.mandatory_above", threshold,
+				money(line.amount()), "A receipt is required for amounts above INR " + money(threshold));
 	}
 
 }
