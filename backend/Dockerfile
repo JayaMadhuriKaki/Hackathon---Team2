@@ -22,5 +22,5 @@ ENV JAVA_OPTS="-XX:MaxRAMPercentage=75" \
     RECEIPTS_DIR=/data/receipts \
     EXPORTS_DIR=/data/exports
 HEALTHCHECK --interval=15s --timeout=5s --start-period=60s --retries=5 \
-  CMD curl -fs http://localhost:8080/actuator/health || exit 1
+  CMD curl -fs http://localhost:8081/actuator/health || exit 1
 ENTRYPOINT ["sh", "-c", "exec java $JAVA_OPTS -jar app.jar"]

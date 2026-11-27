@@ -4,6 +4,7 @@
 #   postgres    localhost:5433          (Postgres 18)
 #   prometheus  http://localhost:9090
 #   grafana     http://localhost:3001
+#   swagger-ui  http://localhost:8082   (API contract, "Try it out" calls the backend)
 name: hackathon
 
 services:
@@ -39,7 +40,7 @@ services:
       # Synthetic demo logins only (DATA-004); override in .env
       SEED_DEMO_USERS: ${SEED_DEMO_USERS:-true}
       SEED_DEMO_PASSWORD: ${SEED_DEMO_PASSWORD:-Demo-Only-2026!}
-      CORS_ALLOWED_ORIGINS: http://localhost:3000,http://localhost:5173
+      CORS_ALLOWED_ORIGINS: http://localhost:3000,http://localhost:5173,http://localhost:8082
       TZ: UTC
     volumes:
       - receipts:/data/receipts
@@ -57,6 +58,17 @@ services:
       - "${FRONTEND_PORT:-3000}:80"
     depends_on:
       - backend
+    restart: unless-stopped
+
+  # API docs: Swagger UI for the hand-written contract (CLAUDE.md §12), http://localhost:8082
+  swagger-ui:
+    image: swaggerapi/swagger-ui:v5.17.14
+    environment:
+      SWAGGER_JSON: /spec/api-contracts.yaml
+    volumes:
+      - ./architecture/api-contracts.yaml:/spec/api-contracts.yaml:ro
+    ports:
+      - "${SWAGGER_PORT:-8082}:8080"
     restart: unless-stopped
 
   prometheus:
