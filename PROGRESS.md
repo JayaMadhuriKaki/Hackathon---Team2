@@ -14,9 +14,9 @@ Updated at the end of every task (CLAUDE.md §15). Report actual results only.
 |---|---|---|---|
 | 0 | Setup | In progress | Repo matches the Drive structure; environment check done (below); specs drafted |
 | 1 | Requirement analysis | Not started | `requirements/requirement-analysis.md` and `use-cases.docx` are still templates |
-| 2 | Architecture | In progress | `architecture/SPEC.md` drafted; ADR-000, ADR-001, diagrams and `security-review.md` not started |
+| 2 | Architecture | In progress | `architecture/SPEC.md` v0.3; ADR-000 (stack; Proposed items P-01..P-11 await confirmation) and ADR-001 (approval chain) written; diagrams and `security-review.md` not started |
 | 3 | API design | Not started | API catalogue API-001..API-036 fixed in `architecture/SPEC.md`; `api-contracts.yaml` still the template placeholder |
-| 4a | Policy engine (test-first) | Not started | |
+| 4a | Policy engine (test-first) | Done | Base fixes (API-001 path, error shape, trace ID); 9 rules + `PolicyEngine` + `RoutingDecider`, tests written and confirmed failing first |
 | 4b | Approval chain + delegation | Not started | |
 | 4c | Remaining backend | Not started | Base Spring Boot app exists (health endpoint only) |
 | 5 | Frontend | Not started | Base React app exists (home page + health card only) |
@@ -59,6 +59,12 @@ Backbone v0.3 §15 decisions postdate the child specs; where a child spec differ
 | Base monorepo: Spring Boot 4.1.3 backend, React 19 frontend, Docker Compose with Postgres 18, Prometheus, Grafana, CI | NFR-006 (partial), NFR-007 (partial) | eca0cfe |
 | Repo aligned with the Drive `hackathon-project` structure | — | cd00682 |
 | CLAUDE.md updated from Drive (stack approved, CL-12..CL-18) | CL-17, CL-18 | 604bdcc |
+| Specs for all folders (backbone v0.3) | — | fe7ee73 |
+| ADR-000, ADR-001; SPEC-Q-02/03/05/14/16 answered | CL-17, FR-005 | 27070ff |
+| Health at `/api/v1/health`, `{code,message,details,traceId}` errors incl. 405, `X-Trace-Id` | API-001, §11.4 | 8248eaa |
+| Failing policy tests written first | POL-001..009 | a465f32 |
+| Policy rules + engine | FR-004, POL-001..009, CL-01/05/07/08 | 109ab2c |
+| Routing decider (breach → reject; > 25,000 / weekend / duplicate / finance head → route; else auto-approve) | CL-02, CL-03, CL-07, CL-16, SPEC-Q-14 | see git log |
 
 ## Tests run
 
@@ -67,6 +73,10 @@ Backbone v0.3 §15 decisions postdate the child specs; where a child spec differ
 | 2026-11-27 | `backend: .\mvnw.cmd test` | 2 passed, 0 failed |
 | 2026-11-27 | `frontend: npm run lint; npm run build` | Lint clean; build succeeded |
 | 2026-11-27 | `docker compose up -d --build` + health checks | All 5 services up; frontend → backend → database health UP; Prometheus target up |
+| 2026-11-27 | `backend: .\mvnw.cmd test` (policy tests before implementation) | Policy tests failed as intended (not implemented); other 6 passed |
+| 2026-11-27 | `backend: .\mvnw.cmd -Dtest=RoutingDeciderTest test` (before implementation) | 9 run, 9 failed as intended |
+| 2026-11-27 | `backend: .\mvnw.cmd test` | **61 run, 0 failed** (46 policy rule cases, 9 routing, 4 health/error shape, 1 purity, 1 context) |
+| 2026-11-27 | `frontend: npm run lint; npm run build` | Lint clean; build succeeded |
 
 ## Open blockers
 
@@ -78,4 +88,4 @@ All business-critical spec questions are answered (2026-11-27, Jaya): SPEC-Q-02 
 
 ## Next step
 
-Team reviews the six specs and answers the blocking questions, then: ADR-000 and ADR-001 (Phase 2), `api-contracts.yaml` (Phase 3), JUnit policy tests before the policy engine (Phase 4a).
+Phase 4b: approval-chain engine, current-step authorisation, delegation rules and sample-audit selector — pure modules, JUnit tests first (backend/SPEC.md tasks 6–8). In parallel the team confirms ADR-000 Proposed items P-02, P-03, P-04 and P-06, which task 9 (Flyway, entities, security) needs.
