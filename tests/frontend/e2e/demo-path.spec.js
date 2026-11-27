@@ -297,8 +297,12 @@ test('TC-E2E-011 finance head sees dashboard, audit trail and policy rules (FR-0
   await expect(page.getByRole('heading', { name: 'Spend by category' })).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Average approval time' })).toBeVisible()
   await nav(page, 'Audit trail')
-  await expect(page.getByText('CLAIM_SUBMITTED').first()).toBeVisible()
+  // Filter, then look inside the table: the newest rows may all be logins, and the filter
+  // dropdown has a hidden <option> with the same text.
+  await page.getByLabel('Action').selectOption('CLAIM_SUBMITTED')
+  await page.getByRole('button', { name: 'Apply' }).click()
+  await expect(page.locator('table').getByText('CLAIM_SUBMITTED').first()).toBeVisible()
   await expect(page.getByRole('button', { name: /delete/i })).toHaveCount(0)
   await nav(page, 'Policy rules')
-  await expect(page.getByText('meals.max_per_day')).toBeVisible()
+  await expect(page.getByText('meals.max_per_day').first()).toBeVisible()
 })

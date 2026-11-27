@@ -1,12 +1,24 @@
-name: CI
+name: CI / Deploy
 
+# Build, test, scan, then deploy the whole stack with Docker Compose on the runner and smoke-test it
+# (CLAUDE.md §2.4 Deployment, NFR-006, NFR-007). On pushes to main the backend image is also
+# published to this repository's GitHub Container Registry.
 on:
   push:
     branches: [main, master]
   pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   backend:
+    name: Backend tests
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -19,8 +31,16 @@ jobs:
           java-version: "21"
           cache: maven
       - run: chmod +x mvnw && ./mvnw -B verify
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-test-reports
+          path: backend/target/surefire-reports
+          retention-days: 7
 
   frontend:
+    name: Frontend lint, build, audit
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -35,10 +55,105 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm run build
+      - name: Dependency check (NFR-007)
+        run: npm audit --omit=dev --audit-level=high
 
-  docker:
+  deploy:
+    name: Deploy stack with Docker Compose + smoke test
     runs-on: ubuntu-latest
     needs: [backend, frontend]
     steps:
       - uses: actions/checkout@v4
-      - run: docker compose build
+      - name: Generate throwaway secrets for this run (nothing is committed)
+        run: |
+          {
+            echo "DB_PASSWORD=$(openssl rand -hex 16)"
+            echo "DB_APP_PASSWORD=$(openssl rand -hex 16)"
+            echo "JWT_SECRET=$(openssl rand -hex 32)"
+            echo "SEED_DEMO_PASSWORD=Ci-$(openssl rand -hex 8)"
+            echo "GRAFANA_PASSWORD=$(openssl rand -hex 12)"
+          } > .env
+          grep '^SEED_DEMO_PASSWORD=' .env | sed 's/^SEED_DEMO_PASSWORD=/DEMO_PASSWORD=/' >> "$GITHUB_ENV"
+      - name: Start the stack (one command)
+        run: docker compose up -d --build
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Smoke test the deployed API
+        run: python tests/integration/smoke_test.py
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "26.13.1"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Browser E2E demo path (11 cases) against the deployed stack
+        working-directory: frontend
+        env:
+          E2E_PASSWORD: ${{ env.DEMO_PASSWORD }}
+          E2E_SKIP_WEBSERVER: "1"
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+          npx playwright test --project=stack
+      - name: Upload E2E failure artefacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-test-results
+          path: frontend/test-results
+          retention-days: 7
+      - name: Prometheus scrapes the backend
+        run: |
+          for i in $(seq 1 20); do
+            curl -s http://localhost:9090/api/v1/targets | grep -q '"health":"up"' && echo "target up" && exit 0
+            sleep 3
+          done
+          curl -s http://localhost:9090/api/v1/targets; exit 1
+      - name: Container status and logs
+        if: always()
+        run: |
+          docker compose ps
+          docker compose logs --no-color backend | tail -200
+      - name: Tear down
+        if: always()
+        run: docker compose down -v
+
+  image-scan:
+    name: Backend image vulnerability scan
+    runs-on: ubuntu-latest
+    needs: [backend]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build backend image
+        run: docker build -f backend/Dockerfile -t expenseflow-backend:ci .
+      - name: Trivy scan (fail on CRITICAL with a fix available)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: expenseflow-backend:ci
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          format: table
+
+  publish:
+    name: Publish backend image (main only)
+    runs-on: ubuntu-latest
+    needs: [deploy, image-scan]
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push
+        run: |
+          IMAGE=ghcr.io/$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')/backend
+          docker build -f backend/Dockerfile -t "$IMAGE:${{ github.sha }}" -t "$IMAGE:latest" .
+          docker push "$IMAGE:${{ github.sha }}"
+          docker push "$IMAGE:latest"
+          echo "Published $IMAGE:${{ github.sha }}" >> "$GITHUB_STEP_SUMMARY"

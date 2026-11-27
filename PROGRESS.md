@@ -18,10 +18,10 @@ Updated at the end of every task (CLAUDE.md §15). Report actual results only.
 | 3 | API design | Not started | API catalogue API-001..API-036 fixed in `architecture/SPEC.md`; `api-contracts.yaml` still the template placeholder |
 | 4a | Policy engine (test-first) | Done | Base fixes (API-001 path, error shape, trace ID); 9 rules + `PolicyEngine` + `RoutingDecider`, tests written and confirmed failing first |
 | 4b | Approval chain + delegation | Done | Chain engine, step authorizer, delegation rules, sample draw — JUnit tests written and confirmed failing first |
-| 4c | Remaining backend | Done (runs in Docker) | Flyway V001–V005, least-privilege app role, JWT login, API-002..038, idempotency, metrics, demo users. Gaps: `api-contracts.yaml` not written yet; full Python seed (DATA-001..003) not written; pytest suite not written |
-| 5 | Frontend | Not started | Base React app exists (home page + health card only) |
+| 4c | Remaining backend | Done (runs in Docker) | Flyway V001–V005, least-privilege app role, JWT login, API-002..038, idempotency, metrics, demo users. Contract `api-contracts.yaml` done (redocly: 0 errors). Gaps: full Python seed (DATA-001..003); pytest suite |
+| 5 | Frontend | Done (merged PR #4) | 13 screens wired to the API; integrated end to end on `feature/integration` (payout create response fix, nginx DNS re-resolve) |
 | 6 | Validation | Not started | |
-| 7 | Deployment | In progress | Docker Compose stack and CI (tests + build) exist from the base setup; dependency check and seed not done |
+| 7 | Deployment | In progress | One-command Compose stack incl. Swagger UI; CI deploys the stack on the runner and runs smoke + 11 browser E2E, npm audit, Trivy image scan, GHCR publish on main. Full seed not done |
 | 8 | Support (SRE) | Not started | Prometheus + Grafana run and scrape the backend; no custom metrics, dashboard, alert or runbook yet |
 | 9 | Demo | Not started | |
 
@@ -81,6 +81,7 @@ Backbone v0.3 §15 decisions postdate the child specs; where a child spec differ
 | 2026-11-27 | `backend: .\mvnw.cmd test` | 104 run, 0 failed (4b implemented) |
 | 2026-11-27 | `backend: .\mvnw.cmd clean test` (with API flow tests on H2) | 131 run, 130 passed, 1 failed: leftover temp export file from an earlier run; fixed with per-run temp dirs, **not re-run** (stopped on request to prioritise Docker) |
 | 2026-11-27 | `docker compose up -d --build backend` + HTTP smoke script | Migrations V001–V005 applied, schema validated, 8 demo users seeded; login, create, line, submit → PENDING_MANAGER, manager approve → APPROVED, other employee → 404, dashboard, payout eligible, audit search, 8 metric series, frontend proxy — all OK |
+| 2026-11-27 | `docker compose up -d --build` + `py -3.13 tests/integration/smoke_test.py` + `npx playwright test --project=stack` (Edge) + `npm test` | Smoke passed; **E2E 11/11 passed**; Vitest 63/63; backend JUnit all passed. Fixed on the way: payout-create response shape, nginx stale backend IP, login rate limit counted successful logins |
 
 ## Open blockers
 
