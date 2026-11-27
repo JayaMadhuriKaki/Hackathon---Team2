@@ -1,0 +1,22 @@
+# Local env (copy from .env.example)
+.env
+.env.*
+!.env.example
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+*.iml
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+
+# Python (if a FastAPI/data service is added later)
+__pycache__/
+.venv/
+*.pyc
+
+# Test / tool output
+playwright-report/
+test-results/
